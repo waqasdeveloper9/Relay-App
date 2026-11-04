@@ -1,0 +1,278 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  NEEDS_REVIEW
+  CANCELLED
+}
+enum RequestStatus {
+  OPEN
+  APPROVED
+  VERIFIED
+}
+enum JobState {
+  QUEUED
+  DONE
+  FAILED
+  UNKNOWN
+}
+model Merchant {
+  id String @id @default(uuid())
+  email String @unique
+  passwordHash String
+  brandName String
+  subscriptionStatus SubscriptionStatus @default(TRIALING)
+  trialStartsAt DateTime @default(now())
+  trialEndsAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  workspace Workspace?
+  shopifyIntegration ShopifyIntegration?
+  whatsappIntegration WhatsAppIntegration?
+  orders OrderLog[]
+  activities Activity[]
+  receipts WebhookReceipt[]
+  oauthAttempts ShopifyOAuthAttempt[]
+  outboundMessages OutboundMessage[]
+  notifications MerchantNotification[]
+  inboxEvents InboxEvent[]
+  syncState ShopifySyncState?
+}
+model Workspace {
+  merchantId String @id
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  settings Json
+  updatedAt DateTime @updatedAt
+}
+model ShopifyIntegration {
+  id String @id @default(uuid())
+  merchantId String @unique
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  shopDomain String? @unique
+  accessToken String
+  refreshToken String?
+  tokenExpiresAt DateTime?
+  refreshExpiresAt DateTime?
+  scopes String[] @default([])
+  webhooksVerifiedAt DateTime?
+  webhooksUrl String?
+  refreshLeaseUntil DateTime?
+  verifiedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model WhatsAppIntegration {
+  id String @id @default(uuid())
+  merchantId String @unique
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  phoneNumberId String? @unique
+  wabaId String
+  systemAccessToken String
+  templateName String @default("order_confirmation_v1")
+  languageCode String @default("en_US")
+  verifiedAt DateTime?
+  metaAppSecret String?
+  verifyTokenHash String?
+  webhookVerifiedAt DateTime?
+  webhookUrl            String?
+  webhookLastReceivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ShopifyOAuthAttempt {
+  stateHash String @id
+  merchantId String
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  shopDomain String
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
+  @@index([merchantId])
+}
+model OrderLog {
+  id String @id @default(uuid())
+  merchantId String
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  shopifyOrderId String
+  number String
+  name String
+  phone String
+  amount Decimal @db.Decimal(18, 4)
+  currency String @db.VarChar(3)
+  status OrderStatus @default(PENDING)
+  delivery String @default("Unfulfilled")
+  trackingUrl String?
+  consent Boolean @default(false)
+  archivedAt DateTime?
+  sourceUpdatedAt DateTime?
+  messageBlockedReason String?
+  confirmationExpiresAt DateTime?
+  tags String[]
+  createdAt DateTime @default(now())
+  conversation Conversation?
+  tasks CustomerRequest[]
+  jobs AutomationJob[]
+  outboundMessages OutboundMessage[]
+  @@unique([merchantId, shopifyOrderId])
+  @@unique([merchantId, id])
+  @@index([merchantId, status, createdAt])
+  @@index([merchantId, phone])
+  @@index([merchantId, archivedAt])
+}
+model Conversation {
+  id String @id @default(uuid())
+  merchantId String
+  orderId String @unique
+  order OrderLog @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
+  human Boolean @default(false)
+  unread Boolean @default(false)
+  messages Message[]
+  @@unique([merchantId, orderId])
+  @@unique([merchantId, id])
+  @@index([merchantId, unread])
+}
+model Message {
+  id String @id @default(uuid())
+  merchantId String
+  conversationId String
+  conversation Conversation @relation(fields: [merchantId, conversationId], references: [merchantId, id], onDelete: Cascade)
+  direction String
+  text String
+  createdAt DateTime @default(now())
+  @@index([merchantId, conversationId, createdAt])
+}
+model CustomerRequest {
+  id String @id @default(uuid())
+  merchantId String
+  orderId String
+  order OrderLog @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
+  kind String
+  detail String
+  status RequestStatus @default(OPEN)
+  createdAt DateTime @default(now())
+  @@index([merchantId, status])
+}
+model AutomationJob {
+  id String @id @default(uuid())
+  merchantId String
+  orderId String
+  order OrderLog @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
+  kind String
+  state JobState @default(QUEUED)
+  attempts Int @default(0)
+  dueAt DateTime
+  messageId String?
+  error String?
+  claimedAt DateTime?
+  retryable Boolean @default(false)
+  @@unique([merchantId, orderId, kind])
+  @@index([state, dueAt])
+  @@index([merchantId, messageId])
+}
+model Activity {
+  id String @id @default(uuid())
+  merchantId String
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  text String
+  createdAt DateTime @default(now())
+  @@index([merchantId, createdAt])
+}
+model WebhookReceipt {
+  id String @id @default(uuid())
+  merchantId String
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  eventId String
+  receivedAt DateTime @default(now())
+  @@unique([merchantId, eventId])
+}
+
+model OutboundMessage {
+  id String @id @default(uuid())
+  merchantId String
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderId String?
+  order OrderLog? @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
+  jobId String?
+  kind String
+  recipient String
+  templateName String
+  languageCode String
+  preview String
+  status String
+  messageId String?
+  error String?
+  statusTimestamp DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  @@unique([merchantId, messageId])
+  @@index([merchantId, jobId])
+  @@index([merchantId, createdAt])
+}
+
+model MerchantNotification {
+ id String @id @default(uuid())
+ merchantId String
+ merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+ key String
+ severity String
+ title String
+ detail String
+ action String
+ readAt DateTime?
+ resolvedAt DateTime?
+ createdAt DateTime @default(now())
+ updatedAt DateTime
+ @@unique([merchantId, key])
+ @@index([merchantId, resolvedAt, createdAt])
+}
+model InboxEvent {
+ id String @id @default(uuid())
+ merchantId String
+ merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+ provider String
+ eventId String
+ topic String
+ payload Json
+ state String @default("QUEUED")
+ attempts Int @default(0)
+ dueAt DateTime @default(now())
+ leaseToken String?
+ leaseUntil DateTime?
+ error String?
+ createdAt DateTime @default(now())
+ processedAt DateTime?
+ @@unique([merchantId, provider, eventId])
+ @@index([state, dueAt])
+ @@index([merchantId, createdAt])
+}
+model ShopifySyncState {
+  manualRequested Boolean @default(false)
+  restoreArchived Boolean @default(false)
+ merchantId String @id
+ merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+ checkpoint DateTime?
+ windowStart DateTime?
+ windowEnd DateTime?
+ cursor String?
+ leaseToken String?
+ leaseUntil DateTime?
+ nextRunAt DateTime @default(now())
+ lastSuccessAt DateTime?
+ error String?
+ attempts Int @default(0)
+}

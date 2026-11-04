@@ -7,6 +7,17 @@ import { config } from '../config.js';
 import { getStore, mutate } from '../services/repository.js';
 import type { Workspace } from '../models/types.js';
 import { buttonPayload } from '../services/order-confirmation.js';
+import { authWorkspaceRedirect } from '../../web/lib/auth-origin.js';
+
+test('hosted authentication compares origins without blocking equivalent URLs', () => {
+  const origin = 'https://workspace.example';
+  assert.equal(authWorkspaceRedirect(origin + '/', origin, false), '');
+  assert.equal(authWorkspaceRedirect(origin + '/dashboard', origin, false), '');
+  assert.equal(authWorkspaceRedirect('https://WORKSPACE.example:443/', origin, false), '');
+  assert.equal(authWorkspaceRedirect(origin, 'http://localhost:3001', true), '');
+  assert.equal(authWorkspaceRedirect(origin, 'https://other.example', false), origin);
+  assert.equal(authWorkspaceRedirect('invalid', origin, false), '');
+});
 
 let server: Server;
 let base: string;

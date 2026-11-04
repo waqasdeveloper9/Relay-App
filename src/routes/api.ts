@@ -18,7 +18,7 @@ api.get('/health', (req, res) => {
     status: 'ok',
     mode: config.demo ? 'demo' : 'connected',
     outboundEnabled: config.outbound,
-    appUrl: config.appUrl,
+    appUrl: new URL(config.appUrl).origin,
     localLoginAllowed: trustedLocalRequest(req),
   });
 });

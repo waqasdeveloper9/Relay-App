@@ -14,6 +14,7 @@ import {
 import { api } from '../api';
 import { Logo } from '../components/ui';
 import { generateStrongPassword } from '../lib/password';
+import { authWorkspaceRedirect } from '../lib/auth-origin';
 
 export function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
   const [register, setRegister] = useState(false);
@@ -30,8 +31,7 @@ export function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
     void api<{ mode: string; appUrl: string; localLoginAllowed: boolean }>('/health')
       .then((h) => {
         setDemo(h.mode === 'demo');
-        if (!h.localLoginAllowed && h.appUrl !== location.origin && h.appUrl.startsWith('https:'))
-          setWorkspaceUrl(h.appUrl);
+        setWorkspaceUrl(authWorkspaceRedirect(h.appUrl, location.origin, h.localLoginAllowed));
       })
       .catch(() => undefined);
   }, []);

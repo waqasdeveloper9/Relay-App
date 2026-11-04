@@ -40,6 +40,12 @@ export function append(c: Conversation, direction: 'in' | 'out' | 'note', text: 
 export function confirm(w: Workspace, order: Order): void {
   if (order.archivedAt) throw new InputError('Restore this removed order before confirming it');
   if (order.status === 'CANCELLED') throw new InputError('A cancelled order cannot be confirmed');
+  if (
+    w.tasks.some(
+      (t) => t.orderId === order.id && t.kind === 'Cancellation' && t.status !== 'VERIFIED',
+    )
+  )
+    throw new InputError('Resolve the cancellation request before confirming this order');
   if (order.status === 'CONFIRMED') return;
   order.status = 'CONFIRMED';
   enqueue(w, order, 'TAG');
@@ -72,11 +78,12 @@ export function handleOrderDecision(
         createdAt: new Date().toISOString(),
       });
     }
+    enqueue(w, order, 'CANCEL_TAGS');
     notify(
       w,
       'decision:' + order.id,
       'Cancellation requested after confirmation',
-      'Customer changed their decision. The order now requires review; Shopify remains unchanged.',
+      'Customer changed their decision. The order now requires review; Shopify cancellation is pending review; confirmation tag removal is queued.',
       'Review the cancellation request before dispatch.',
       'warning',
     );

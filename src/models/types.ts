@@ -61,7 +61,15 @@ export interface Task {
 export interface Job {
   id: string;
   orderId: string;
-  kind: 'CONFIRMATION' | 'REMINDER' | 'TAG' | 'TEST_HELLO' | 'TEST_CONFIRMATION' | 'CANCEL';
+  kind:
+    | 'CONFIRMATION'
+    | 'REMINDER'
+    | 'TAG'
+    | 'TEST_HELLO'
+    | 'TEST_CONFIRMATION'
+    | 'CANCEL'
+    | 'CANCEL_TAGS'
+    | 'CANCEL_CLEANUP';
   state: 'QUEUED' | 'DONE' | 'FAILED' | 'UNKNOWN';
   attempts: number;
   claimedAt?: string;

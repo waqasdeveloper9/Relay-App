@@ -1,7 +1,12 @@
 import { config } from '../config.js';
 import { readyStores, mutate } from './repository.js';
 import { activity, append, canSend, conversation, enqueue } from './automation.js';
-import { addOrderTag, ProviderError, sendHelloWorldTest } from './providers.js';
+import {
+  addOrderTag,
+  syncCancellationTags,
+  ProviderError,
+  sendHelloWorldTest,
+} from './providers.js';
 import { orderTestAllowed } from './order-test.js';
 import { freshShopifyIntegration } from './shopify-tokens.js';
 import { cancelUnpaidCodOrder, sendOrderConfirmation } from './order-confirmation.js';
@@ -39,7 +44,7 @@ export async function tick(): Promise<void> {
                 Date.parse(receipt.createdAt) +
                   reliability(s.workspace).maxMessageAgeHours * 3600000,
               ).toISOString();
-          } else if (j.kind === 'TAG' && j.attempts < 8) {
+          } else if (['TAG', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(j.kind) && j.attempts < 8) {
             j.state = 'QUEUED';
             j.dueAt = new Date().toISOString();
           } else {
@@ -80,7 +85,11 @@ export async function tick(): Promise<void> {
       const order = claimed.workspace.orders.find((o) => o.id === candidate.orderId);
       let historyId: string | undefined;
       try {
-        if (order && !['TAG', 'CANCEL'].includes(candidate.kind) && !config.demo)
+        if (
+          order &&
+          !['TAG', 'CANCEL', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(candidate.kind) &&
+          !config.demo
+        )
           historyId = await beginMessage(id, {
             orderId: order.id,
             jobId: candidate.id,
@@ -103,7 +112,7 @@ export async function tick(): Promise<void> {
         if (order.archivedAt)
           throw new Error('Order was removed from Relay. Automation is stopped for this order.');
         if (
-          !['TAG', 'CANCEL'].includes(candidate.kind) &&
+          !['TAG', 'CANCEL', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(candidate.kind) &&
           Date.now() - Date.parse(order.createdAt) >
             reliability(claimed.workspace).maxMessageAgeHours * 3600000
         )
@@ -124,7 +133,7 @@ export async function tick(): Promise<void> {
             )
           )
             throw new Error('No pending customer cancellation decision');
-        } else if (candidate.kind !== 'TAG') {
+        } else if (!['TAG', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(candidate.kind)) {
           if (!canSend(claimed)) throw new Error('Trial expired or subscription inactive');
           if (claimed.workspace.conversations.some((c) => c.orderId === order.id && c.human))
             throw new Error('Assistant paused for human handling');
@@ -146,9 +155,24 @@ export async function tick(): Promise<void> {
           );
         let messageId: string | undefined;
         if (!config.demo) {
-          if (candidate.kind === 'TAG') await addOrderTag(await freshShopifyIntegration(id), order);
+          if (candidate.kind === 'TAG') {
+            if (order.status === 'CONFIRMED')
+              await addOrderTag(await freshShopifyIntegration(id), order);
+          } else if (candidate.kind === 'CANCEL_TAGS' || candidate.kind === 'CANCEL_CLEANUP')
+            await syncCancellationTags(
+              await freshShopifyIntegration(id),
+              order,
+              order.status === 'CANCELLED',
+            );
           else if (candidate.kind === 'CANCEL')
-            await cancelUnpaidCodOrder(await freshShopifyIntegration(id), order);
+            await cancelUnpaidCodOrder(
+              await freshShopifyIntegration(id),
+              order,
+              claimed.workspace.tasks.find(
+                (t) =>
+                  t.orderId === order.id && t.kind === 'Cancellation' && t.status === 'APPROVED',
+              )?.detail,
+            );
           else if (candidate.kind === 'TEST_CONFIRMATION') {
             const integration = await freshShopifyIntegration(id);
             messageId = await sendOrderConfirmation(
@@ -179,13 +203,15 @@ export async function tick(): Promise<void> {
               historyId,
             );
           }
-        } else if (candidate.kind !== 'TAG') messageId = `demo-${candidate.id}`;
+        } else if (!['TAG', 'CANCEL', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(candidate.kind))
+          messageId = `demo-${candidate.id}`;
         if (historyId && messageId)
           await updateMessage(id, historyId, { status: 'ACCEPTED', messageId });
         await mutate(id, (s) => {
           const j = s.workspace.jobs.find((j) => j.id === candidate.id)!;
           const o = s.workspace.orders.find((o) => o.id === order.id)!;
           j.state = 'DONE';
+          j.error = undefined;
           j.claimedAt = undefined;
           j.retryable = false;
           resolveNotification(s.workspace, 'job:' + j.id);
@@ -195,9 +221,35 @@ export async function tick(): Promise<void> {
             ).toISOString();
           j.messageId = messageId;
           if (j.kind === 'TAG') {
-            if (!o.tags.includes('COD-CONFIRMED')) o.tags.push('COD-CONFIRMED');
+            if (order.status === 'CONFIRMED' && !o.tags.includes('COD-CONFIRMED'))
+              o.tags.push('COD-CONFIRMED');
+            if (o.status !== 'CONFIRMED') {
+              const tagJob = s.workspace.jobs.find(
+                (job) => job.orderId === o.id && job.kind === 'CANCEL_TAGS',
+              );
+              if (tagJob && tagJob.state !== 'UNKNOWN') {
+                tagJob.state = 'QUEUED';
+                tagJob.attempts = 0;
+                tagJob.dueAt = new Date().toISOString();
+              }
+            }
+          } else if (j.kind === 'CANCEL_TAGS' || j.kind === 'CANCEL_CLEANUP') {
+            o.tags = o.tags.filter(
+              (tag) => tag !== 'COD-CONFIRMED' && tag !== 'CANCELLATION-REQUESTED',
+            );
+            if (order.status !== 'CANCELLED') o.tags.push('CANCELLATION-REQUESTED');
+            if (o.status === 'CANCELLED' && order.status !== 'CANCELLED') {
+              enqueue(s.workspace, o, 'CANCEL_CLEANUP');
+              const cleanup = s.workspace.jobs.find(
+                (job) => job.orderId === o.id && job.kind === 'CANCEL_CLEANUP',
+              )!;
+              cleanup.state = 'QUEUED';
+              cleanup.attempts = 0;
+              cleanup.dueAt = new Date().toISOString();
+            }
           } else if (j.kind === 'CANCEL') {
             o.status = 'CANCELLED';
+            enqueue(s.workspace, o, 'CANCEL_CLEANUP');
             const task = s.workspace.tasks.find(
               (t) => t.orderId === o.id && t.kind === 'Cancellation' && t.status === 'APPROVED',
             );

@@ -709,3 +709,73 @@ test('trusted local login issues a usable local session while public login keeps
     config.allowedOrigins = previous;
   }
 });
+
+test('merchant cancellation requires explicit reason and confirmation and cannot queue twice', async () => {
+  const s = await session();
+  const id = randomUUID();
+  await mutate(s.merchant.id, (store) => {
+    const order = store.workspace.orders[0]!;
+    order.status = 'NEEDS_REVIEW';
+    order.archivedAt = undefined;
+    store.workspace.jobs = store.workspace.jobs.filter((j) => j.orderId !== order.id);
+    store.workspace.tasks.push({
+      id,
+      orderId: order.id,
+      kind: 'Cancellation',
+      status: 'OPEN',
+      detail: 'Customer cancellation',
+      createdAt: new Date().toISOString(),
+    });
+  });
+  assert.equal(
+    (await request('/tasks/' + id + '/action', { action: 'approve' }, s.cookie)).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(
+        '/tasks/' + id + '/action',
+        { action: 'cancel', reason: 'Customer request' },
+        s.cookie,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(
+        '/tasks/' + id + '/action',
+        { action: 'cancel', reason: ' ', confirmed: true },
+        s.cookie,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(
+        '/tasks/' + id + '/action',
+        { action: 'cancel', reason: 'Customer request', confirmed: true },
+        s.cookie,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(
+        '/tasks/' + id + '/action',
+        { action: 'cancel', reason: 'Customer request', confirmed: true },
+        s.cookie,
+      )
+    ).status,
+    400,
+  );
+  const store = (await getStore(s.merchant.id))!;
+  const task = store.workspace.tasks.find((t) => t.id === id)!;
+  assert.equal(
+    store.workspace.jobs.filter((j) => j.orderId === task.orderId && j.kind === 'CANCEL').length,
+    1,
+  );
+  assert.equal(store.workspace.orders.find((o) => o.id === task.orderId)!.status, 'NEEDS_REVIEW');
+});

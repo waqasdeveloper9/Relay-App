@@ -183,3 +183,35 @@ export async function sendHelloWorldTest(
   );
   return metaMessageId(result);
 }
+
+export async function syncCancellationTags(
+  i: Integration,
+  order: Order,
+  completed: boolean,
+): Promise<void> {
+  const id = 'gid://shopify/Order/' + order.shopifyOrderId;
+  const removed = z
+    .object({ tagsRemove: z.object({ userErrors: z.array(z.object({ message: z.string() })) }) })
+    .parse(
+      await shopifyGraphql(
+        i,
+        'mutation CancellationTagsRemove($id: ID!, $tags: [String!]!) { tagsRemove(id: $id, tags: $tags) { userErrors { message } } }',
+        { id, tags: completed ? ['COD-CONFIRMED', 'CANCELLATION-REQUESTED'] : ['COD-CONFIRMED'] },
+      ),
+    );
+  if (removed.tagsRemove.userErrors.length)
+    throw new ProviderError('Shopify could not remove cancellation-related tags');
+  if (!completed) {
+    const added = z
+      .object({ tagsAdd: z.object({ userErrors: z.array(z.object({ message: z.string() })) }) })
+      .parse(
+        await shopifyGraphql(
+          i,
+          'mutation CancellationTagsAdd($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { message } } }',
+          { id, tags: ['CANCELLATION-REQUESTED'] },
+        ),
+      );
+    if (added.tagsAdd.userErrors.length)
+      throw new ProviderError('Shopify could not apply the cancellation request tag');
+  }
+}

@@ -19,6 +19,17 @@ export function OrderDrawer({
   act: Act;
 }) {
   const [evidence, setEvidence] = useState('');
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationConfirmed, setCancellationConfirmed] = useState(false);
+  const cancelJob = w.jobs.find((j) => j.orderId === o.id && j.kind === 'CANCEL');
+  const tagJob = w.jobs.find(
+    (j) =>
+      j.orderId === o.id &&
+      j.kind === (o.status === 'CANCELLED' ? 'CANCEL_CLEANUP' : 'CANCEL_TAGS'),
+  );
+  const cancellationPending = w.tasks.some(
+    (t) => t.orderId === o.id && t.kind === 'Cancellation' && o.status !== 'CANCELLED',
+  );
   return (
     <Modal
       title={`Order ${o.number}`}
@@ -50,14 +61,21 @@ export function OrderDrawer({
       <div className="notice">
         <strong>Shopify sync</strong>
         <p>
-          {o.tags.includes('COD-CONFIRMED')
-            ? 'COD-CONFIRMED tag applied successfully.'
-            : w.jobs.find((j) => j.orderId === o.id && j.kind === 'TAG')
-              ? 'Tag job: ' + w.jobs.find((j) => j.orderId === o.id && j.kind === 'TAG')!.state
-              : 'No confirmation tag queued.'}
+          {tagJob
+            ? 'Cancellation tags: ' + tagJob.state
+            : o.tags.includes('COD-CONFIRMED')
+              ? 'COD-CONFIRMED tag applied successfully.'
+              : w.jobs.find((j) => j.orderId === o.id && j.kind === 'TAG')
+                ? 'Tag job: ' + w.jobs.find((j) => j.orderId === o.id && j.kind === 'TAG')!.state
+                : 'No confirmation tag queued.'}
         </p>
         {w.jobs
-          .filter((j) => j.orderId === o.id && j.kind === 'TAG' && j.error)
+          .filter(
+            (j) =>
+              j.orderId === o.id &&
+              ['TAG', 'CANCEL_TAGS', 'CANCEL_CLEANUP', 'CANCEL'].includes(j.kind) &&
+              j.error,
+          )
           .map((j) => (
             <p key={j.id}>{j.error}</p>
           ))}
@@ -86,7 +104,9 @@ export function OrderDrawer({
         </button>
         <button
           className="button primary"
-          disabled={busy || o.status === 'CONFIRMED' || o.status === 'CANCELLED'}
+          disabled={
+            busy || cancellationPending || o.status === 'CONFIRMED' || o.status === 'CANCELLED'
+          }
           onClick={() => {
             void act(
               () => api(`/orders/${o.id}/action`, { action: 'confirm' }),
@@ -124,11 +144,65 @@ export function OrderDrawer({
             <div>
               <strong>{t.kind}</strong>
               <span className="pill">
-                {t.status === 'VERIFIED' ? 'Merchant verified' : t.status.toLowerCase()}
+                {t.kind === 'Cancellation'
+                  ? o.status === 'CANCELLED'
+                    ? 'Cancelled in Shopify'
+                    : cancelJob
+                      ? 'Cancellation: ' + cancelJob.state.toLowerCase()
+                      : 'Review required'
+                  : t.status === 'VERIFIED'
+                    ? 'Merchant verified'
+                    : t.status.toLowerCase()}
               </span>
             </div>
             <p>{t.detail}</p>
-            {t.status === 'OPEN' && (
+            {t.kind === 'Cancellation' && o.status !== 'CANCELLED' && !cancelJob && (
+              <>
+                <label className="field">
+                  <span>Cancellation reason</span>
+                  <textarea
+                    maxLength={255}
+                    value={cancellationReason}
+                    onChange={(e) => setCancellationReason(e.target.value)}
+                    placeholder="Record why this order should be cancelled"
+                  />
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={cancellationConfirmed}
+                    onChange={(e) => setCancellationConfirmed(e.target.checked)}
+                  />{' '}
+                  I reviewed payment, fulfillment and dispatch. Cancel this order in Shopify (cannot
+                  be undone).
+                </label>
+                <button
+                  className="button danger"
+                  disabled={busy || !cancellationReason.trim() || !cancellationConfirmed}
+                  onClick={() =>
+                    void act(
+                      () =>
+                        api(`/tasks/${t.id}/action`, {
+                          action: 'cancel',
+                          reason: cancellationReason,
+                          confirmed: cancellationConfirmed,
+                        }),
+                      'Cancellation queued. Track Shopify completion here.',
+                    )
+                  }
+                >
+                  Approve &amp; cancel in Shopify
+                </button>
+              </>
+            )}
+            {t.kind === 'Cancellation' && cancelJob && o.status !== 'CANCELLED' && (
+              <p>
+                Shopify cancellation: {cancelJob.state.toLowerCase()}.{' '}
+                {cancelJob.error || 'Awaiting verified completion.'} Check Reliability for failed or
+                uncertain actions.
+              </p>
+            )}
+            {t.kind !== 'Cancellation' && t.status === 'OPEN' && (
               <button
                 className="button secondary"
                 disabled={busy}
@@ -142,7 +216,7 @@ export function OrderDrawer({
                 Approve for action
               </button>
             )}
-            {t.status === 'APPROVED' && (
+            {t.kind !== 'Cancellation' && t.status === 'APPROVED' && (
               <>
                 <label className="field">
                   <span>Completed action / verification reference</span>
@@ -172,8 +246,8 @@ export function OrderDrawer({
         <p className="muted">No customer requests for this order.</p>
       )}
       <div className="notice">
-        Approval does not automatically edit, cancel, or hold an order. Complete the action in
-        Shopify and the courier system, then record your verification here.
+        Cancellation approval queues a Shopify action; Cancelled appears only after Shopify
+        confirms. Address edits and courier actions still require manual completion.
       </div>
     </Modal>
   );

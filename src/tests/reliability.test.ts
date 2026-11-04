@@ -416,7 +416,10 @@ test('Shopify state reconciliation completes uncertain cancellation and tag jobs
     updated_at: new Date(Date.now() + 1000).toISOString(),
     tags: 'COD-CONFIRMED',
   });
-  assert.equal(s.workspace.jobs[1]!.state, 'DONE');
+  assert.equal(
+    s.workspace.jobs.find((j) => j.orderId === confirmed.id && j.kind === 'TAG')!.state,
+    'DONE',
+  );
 });
 test('confirmation setup is tenant-bound and requires verification again after the callback URL changes', async () => {
   const { metaWebhookReady, metaCallbackUrl } =

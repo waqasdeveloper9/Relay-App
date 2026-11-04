@@ -1,3 +1,4 @@
+import { approveCancellation } from '../services/cancellation.js';
 import { applyBulkOrderAction } from '../services/order-operations.js';
 import type { Request, Response } from 'express';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -324,13 +325,24 @@ export async function saveSettings(req: Request, res: Response): Promise<void> {
   res.json({ ok: true });
 }
 export async function taskAction(req: Request, res: Response): Promise<void> {
-  const { action } = z
-    .object({ action: z.enum(['approve', 'verify']), evidence: z.string().max(1000).optional() })
+  const { action, reason, confirmed } = z
+    .object({
+      action: z.enum(['approve', 'verify', 'cancel']),
+      evidence: z.string().max(1000).optional(),
+      reason: z.string().trim().min(1).max(255).optional(),
+      confirmed: z.boolean().optional(),
+    })
     .parse(req.body);
   const evidence = req.body.evidence as string | undefined;
   await mutate(req.merchantId, (s) => {
     const t = s.workspace.tasks.find((t) => t.id === req.params.id);
     if (!t) throw Object.assign(new Error('Request not found'), { status: 404 });
+    if (action === 'cancel') {
+      approveCancellation(s.workspace, t.id, reason ?? '', confirmed === true);
+      return;
+    }
+    if (t.kind === 'Cancellation')
+      throw new InputError('Use Approve & cancel in Shopify to complete this request');
     if (action === 'approve') {
       if (t.status !== 'OPEN') throw new InputError('Only open requests can be approved');
       t.status = 'APPROVED';

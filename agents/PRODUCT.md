@@ -18,7 +18,7 @@ Reduce routine merchant effort while keeping customer decisions, external action
 
 - Confirm: Relay confirms the order and queues `COD-CONFIRMED` tagging. Payment remains pending and fulfillment remains unchanged.
 - Cancel while awaiting a decision: request cancellation; verify current Shopify eligibility and completion before displaying Cancelled.
-- Cancel after confirmation: move to Needs review, save an open cancellation request, and hand over to a human. Do not automatically cancel Shopify. The prior confirmation tag can remain as historical state; it alone does not prove current dispatch eligibility.
+- Cancel after confirmation: move to Needs review, save an open cancellation request, and hand over to a human. Do not automatically cancel Shopify. Queue removal of COD-CONFIRMED and addition of CANCELLATION-REQUESTED. Merchant approval with a reason queues guarded Shopify cancellation; only verified cancelledAt moves Relay to Cancelled. Tag cleanup is separately tracked and retryable.
 - Duplicate delivery of the same event must be harmless. A distinct changed decision must not be mistaken for the same webhook delivery.
 - Late, ambiguous, paid, fulfilled, or conflicting cases need explicit review according to the current policy. Do not reopen a cancelled order automatically.
 - Removing an order from Relay archives it and retains history/deduplication. Explicit restore may show it again without repeating completed sends. Shopify orders are not deleted.

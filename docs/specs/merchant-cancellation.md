@@ -1,0 +1,3 @@
+# Merchant cancellation approval
+
+Confirm then Cancel creates Needs review and idempotent Shopify tag removal plus CANCELLATION-REQUESTED. Explicit merchant approval requires a reason and confirmation. Durable CANCEL checks current unpaid, unfulfilled COD eligibility; only verified cancelledAt moves Relay to Cancelled. Separate retryable tag cleanup removes obsolete tags. Unknown cancellation needs reconciliation. Duplicate approval cannot duplicate jobs. Initial pending-decision cancellation is preserved. No refunds or courier cancellation. Test mock providers, tenant isolation, replay, rejection and unknown outcomes. No migration: job kinds and request detail already persist as strings.

@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { createStore, getStore, mutate } from '../services/repository.js';
+import { approveCancellation } from '../services/cancellation.js';
+import { tick } from '../services/worker.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../config.js';
@@ -69,7 +73,7 @@ test('first button decision wins and cancellation is not marked complete prematu
   assert.equal(other.workspace.tasks[0]!.status, 'OPEN');
   handleOrderDecision(other.workspace, other.order, 'CANCEL');
   assert.equal(other.workspace.tasks.length, 1);
-  assert.equal(other.workspace.jobs.length, 1);
+  assert.equal(other.workspace.jobs.length, 2);
   assert.equal(other.workspace.jobs[0]!.kind, 'TAG');
 });
 
@@ -223,5 +227,90 @@ test('cancellation provider rejection and uncertain completion never report succ
     );
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test('merchant review cancels Shopify once and cleans confirmation and request tags', async () => {
+  const { workspace, order, integration } = fixtures();
+  workspace.orders = [order];
+  workspace.integration = integration;
+  const id = randomUUID();
+  await createStore({
+    merchant: {
+      id,
+      email: id + '@test.invalid',
+      brandName: 'Test',
+      passwordHash: '',
+      createdAt: new Date().toISOString(),
+      trialEndsAt: new Date(Date.now() + 86400000).toISOString(),
+      subscriptionStatus: 'TRIALING',
+    },
+    workspace,
+  });
+  const original = globalThis.fetch,
+    demo = config.demo;
+  const tags = new Set<string>();
+  let cancellations = 0;
+  globalThis.fetch = async (_url, options) => {
+    const { query, variables } = JSON.parse(String(options?.body));
+    if (query.includes('tagsRemove')) {
+      for (const tag of variables.tags) tags.delete(tag);
+      return response({ data: { tagsRemove: { userErrors: [] } } });
+    }
+    if (query.includes('tagsAdd')) {
+      for (const tag of variables.tags) tags.add(tag);
+      return response({ data: { tagsAdd: { userErrors: [] } } });
+    }
+    if (query.includes('mutation RelayCancel')) {
+      cancellations++;
+      assert.equal(variables.note, 'Customer requested cancellation');
+      return response({
+        data: {
+          orderCancel: {
+            job: { id: 'job1', done: true },
+            orderCancelUserErrors: [],
+            userErrors: [],
+          },
+        },
+      });
+    }
+    if (query.includes('RelayCancelState'))
+      return response({ data: { order: { cancelledAt: new Date().toISOString() } } });
+    return response({ data: { order: remoteOrder() } });
+  };
+  config.demo = false;
+  try {
+    await mutate(id, (s) => {
+      handleOrderDecision(s.workspace, s.workspace.orders[0]!, 'CONFIRM');
+    });
+    await tick();
+    assert.ok(tags.has('COD-CONFIRMED'));
+    await mutate(id, (s) => {
+      handleOrderDecision(s.workspace, s.workspace.orders[0]!, 'CANCEL');
+    });
+    await tick();
+    assert.ok(!tags.has('COD-CONFIRMED'));
+    assert.ok(tags.has('CANCELLATION-REQUESTED'));
+    const pending = (await getStore(id))!;
+    const taskId = pending.workspace.tasks[0]!.id;
+    assert.equal(pending.workspace.orders[0]!.status, 'NEEDS_REVIEW');
+    assert.throws(() => approveCancellation(pending.workspace, taskId, '', true));
+    assert.throws(() => approveCancellation(pending.workspace, taskId, 'reason', false));
+    await mutate(id, (s) =>
+      approveCancellation(s.workspace, taskId, 'Customer requested cancellation', true),
+    );
+    await assert.rejects(
+      mutate(id, (s) => approveCancellation(s.workspace, taskId, 'Again', true)),
+    );
+    await tick();
+    assert.equal((await getStore(id))!.workspace.orders[0]!.status, 'CANCELLED');
+    await tick();
+    await tick();
+    assert.equal(cancellations, 1);
+    assert.equal(tags.size, 0);
+    assert.equal((await getStore(id))!.workspace.tasks[0]!.status, 'VERIFIED');
+  } finally {
+    globalThis.fetch = original;
+    config.demo = demo;
   }
 });

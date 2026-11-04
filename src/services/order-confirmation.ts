@@ -177,7 +177,11 @@ export async function sendOrderConfirmation(
   );
   return metaMessageId(result);
 }
-export async function cancelUnpaidCodOrder(i: Integration, order: Order): Promise<void> {
+export async function cancelUnpaidCodOrder(
+  i: Integration,
+  order: Order,
+  reason = 'Customer requested cancellation through Relay WhatsApp confirmation',
+): Promise<void> {
   const current = await readShopOrder(i, order);
   if (!current) throw new ProviderError('Shopify order is unavailable');
   if (current.cancelledAt) return;
@@ -201,8 +205,8 @@ export async function cancelUnpaidCodOrder(i: Integration, order: Order): Promis
     .parse(
       await shopifyGraphql(
         i,
-        'mutation RelayCancel($id: ID!) { orderCancel(orderId: $id, reason: CUSTOMER, restock: true, notifyCustomer: false, staffNote: "Customer requested cancellation through Relay WhatsApp confirmation") { job { id done } orderCancelUserErrors { message } userErrors { message } } }',
-        { id: current.id },
+        'mutation RelayCancel($id: ID!, $note: String!) { orderCancel(orderId: $id, reason: CUSTOMER, restock: true, notifyCustomer: false, staffNote: $note) { job { id done } orderCancelUserErrors { message } userErrors { message } } }',
+        { id: current.id, note: reason.slice(0, 255) },
       ),
     ).orderCancel;
   if (result.orderCancelUserErrors.length || result.userErrors.length)

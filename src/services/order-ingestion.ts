@@ -157,6 +157,8 @@ export function ingestOrder(
       .filter(Boolean);
   if (input.cancelled_at) {
     o.status = 'CANCELLED';
+    if (w.jobs.some((j) => j.orderId === o.id && j.kind === 'CANCEL'))
+      enqueue(w, o, 'CANCEL_CLEANUP');
     for (const job of w.jobs.filter(
       (j) => j.orderId === o.id && j.kind === 'CANCEL' && ['QUEUED', 'UNKNOWN'].includes(j.state),
     )) {

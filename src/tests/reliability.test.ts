@@ -1,3 +1,5 @@
+import { customerConversations, customerThreads } from '../models/customer-conversations.js';
+import { conversation, append } from '../services/automation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -565,4 +567,73 @@ test('authorized own-number recovery queues sandbox confirmation without inventi
   } finally {
     config.demo = previous;
   }
+});
+
+test('customer inbox combines legacy order history and retains ambiguous replies once', async () => {
+  const s = fixture();
+  s.workspace.integration.phoneNumberId = 'test-sender';
+  const seed = demoWorkspace().orders[0]!;
+  s.workspace.orders = [
+    { ...seed, id: randomUUID(), phone: '923001234567' },
+    { ...seed, id: randomUUID(), phone: '923001234567' },
+  ];
+  for (const o of s.workspace.orders) {
+    const c = conversation(s.workspace, o);
+    append(c, 'note', o.number);
+  }
+  await createStore(s);
+  const payload = {
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              metadata: { phone_number_id: s.workspace.integration.phoneNumberId },
+              messages: [
+                {
+                  id: randomUUID(),
+                  from: seed.phone === '923001234567' ? seed.phone : '923001234567',
+                  text: { body: 'Hi, I have a question' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  };
+  await processMetaEvent(s.merchant.id, payload);
+  await processMetaEvent(s.merchant.id, payload);
+  const w = (await getStore(s.merchant.id))!.workspace;
+  const groups = customerConversations(w);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]!.messages.length, 3);
+  assert.equal(groups[0]!.messages.filter((m) => m.text === 'Hi, I have a question').length, 1);
+  assert.equal(w.conversations.find((c) => !c.orderId)?.messages[0]?.text, 'Hi, I have a question');
+  assert.ok(w.orders.every((o) => o.status === seed.status));
+  assert.equal(customerThreads(w, w.conversations[0]!).length, 3);
+  const other = fixture();
+  assert.equal(customerConversations(other.workspace).length, 0);
+});
+test('customer inbox retains messages without any order', async () => {
+  const s = fixture();
+  s.workspace.integration.phoneNumberId = 'test-sender';
+  await createStore(s);
+  await processMetaEvent(s.merchant.id, {
+    entry: [
+      {
+        changes: [
+          {
+            value: {
+              metadata: { phone_number_id: s.workspace.integration.phoneNumberId },
+              messages: [{ id: randomUUID(), from: '923009876543', text: { body: 'Hello' } }],
+            },
+          },
+        ],
+      },
+    ],
+  });
+  const w = (await getStore(s.merchant.id))!.workspace;
+  assert.equal(customerConversations(w)[0]?.messages[0]?.text, 'Hello');
+  assert.equal(w.orders.length, 0);
 });

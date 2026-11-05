@@ -38,3 +38,5 @@ Implemented areas include tenant persistence, authentication, Shopify OAuth/inta
 Public SaaS work remains: production consent/onboarding, account recovery and email verification, team roles, billing, privacy lifecycle and Shopify distribution requirements, backup/recovery validation, and production worker deployment. Human live replies, courier integrations, refunds, and address edits must not be advertised as automated unless implemented and verified.
 
 Older README and operational paragraphs contain historical limits; the current implementation and regression tests must be checked when those descriptions conflict. Do not copy live identifiers, secrets, or temporary tunnel addresses into specifications.
+
+Inbox groups order threads and general replies by customer phone inside each merchant workspace. Order labels preserve message context; ambiguous free-text replies never select an order or trigger Shopify actions. General live replies remain unavailable.

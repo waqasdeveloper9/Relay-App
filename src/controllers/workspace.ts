@@ -1,3 +1,4 @@
+import { customerThreads } from '../models/customer-conversations.js';
 import { approveCancellation } from '../services/cancellation.js';
 import { applyBulkOrderAction } from '../services/order-operations.js';
 import type { Request, Response } from 'express';
@@ -382,9 +383,11 @@ export async function conversationAction(req: Request, res: Response): Promise<v
   await mutate(req.merchantId, (s) => {
     const c = s.workspace.conversations.find((c) => c.id === req.params.id);
     if (!c) throw Object.assign(new Error('Conversation not found'), { status: 404 });
-    c.unread = false;
-    if (input.action === 'takeover') c.human = true;
-    if (input.action === 'resume') c.human = false;
+    for (const thread of customerThreads(s.workspace, c)) thread.unread = false;
+    if (input.action === 'takeover')
+      for (const thread of customerThreads(s.workspace, c)) thread.human = true;
+    if (input.action === 'resume')
+      for (const thread of customerThreads(s.workspace, c)) thread.human = false;
     if (input.action === 'reply') {
       if (!input.text) throw new Error('Message is required');
       c.human = true;
@@ -393,7 +396,8 @@ export async function conversationAction(req: Request, res: Response): Promise<v
     if (input.action === 'simulate') {
       if (!input.text) throw new Error('Message is required');
       const o = s.workspace.orders.find((o) => o.id === c.orderId)!;
-      handleIncoming(s.workspace, o, input.text, true);
+      if (o) handleIncoming(s.workspace, o, input.text, true);
+      else append(c, 'in', input.text);
     }
   });
   res.json({ ok: true });
@@ -403,7 +407,7 @@ export async function readConversation(req: Request, res: Response): Promise<voi
   await mutate(req.merchantId, (s) => {
     const c = s.workspace.conversations.find((c) => c.id === req.params.id);
     if (!c) throw Object.assign(new Error('Conversation not found'), { status: 404 });
-    c.unread = false;
+    for (const thread of customerThreads(s.workspace, c)) thread.unread = false;
   });
   res.json({ ok: true });
 }

@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCheck, Send, Users, Zap } from 'lucide-react';
-import type { Conversation } from '../../src/models/types';
+import { customerConversations } from '../../src/models/customer-conversations';
 import { api, type Snapshot } from '../api';
 import { initials, time, type Act } from '../lib/format';
 import { Empty } from '../components/ui';
 
 export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; act: Act }) {
   const w = data.workspace;
-  const [id, setId] = useState(w.conversations[0]?.id);
+  const threads = useMemo(() => customerConversations(w), [w]);
+  const [id, setId] = useState(threads[0]?.phone || threads[0]?.id);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const messagesRef = useRef<HTMLDivElement>(null);
   const readAttempts = useRef(new Set<string>());
   const [simulate, setSimulate] = useState(false);
-  const c: Conversation | undefined =
-    w.conversations.find((c) => c.id === id) ?? w.conversations[0];
-  const o = w.orders.find((o) => o.id === c?.orderId);
+  const c = threads.find((c) => (c.phone || c.id) === id) ?? threads[0];
+
   const draftKey = c ? `${c.id}:${simulate ? 'incoming' : 'outgoing'}` : '';
   const text = drafts[draftKey] ?? '';
   function setText(value: string) {
@@ -26,11 +26,11 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
       readAttempts.current.add(marker);
       void act(() => api(`/conversations/${c.id}/read`, {}), '');
     }
-  }, [c?.id, c?.unread, busy, act]);
+  }, [c?.id, c?.unread, c?.messages.at(-1)?.id, busy, act]);
   useEffect(() => {
     if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
   }, [c?.id, c?.messages.length]);
-  if (!c || !o)
+  if (!c)
     return (
       <section className="panel">
         <Empty
@@ -44,23 +44,20 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
       <aside className="conversation-list">
         <div className="conversation-list-title">
           <h2>Conversations</h2>
-          <span className="count-pill">{w.conversations.length}</span>
+          <span className="count-pill">{threads.length}</span>
         </div>
-        {w.conversations.map((con) => {
-          const order = w.orders.find((o) => o.id === con.orderId)!;
+        {threads.map((con) => {
           return (
             <button
               key={con.id}
               className={`conversation-item ${c.id === con.id ? 'active' : ''}`}
-              onClick={() => setId(con.id)}
+              onClick={() => setId(con.phone || con.id)}
             >
-              <span className="avatar purple">{initials(order.name)}</span>
+              <span className="avatar purple">{initials(con.name)}</span>
               <div>
-                <strong>{order.name}</strong>
+                <strong>{con.name}</strong>
                 <p>{con.messages.at(-1)?.text}</p>
-                <small>
-                  {order.number} · {con.human ? 'Assigned to team' : 'Assistant active'}
-                </small>
+                <small>{con.phone ? '+' + con.phone : 'No phone'}</small>
               </div>
               {con.unread && <i />}
             </button>
@@ -69,12 +66,10 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
       </aside>
       <section className="chat">
         <div className="chat-header">
-          <span className="avatar purple">{initials(o.name)}</span>
+          <span className="avatar purple">{initials(c.name)}</span>
           <div>
-            <h2>{o.name}</h2>
-            <p>
-              {o.number} · +{o.phone}
-            </p>
+            <h2>{c.name}</h2>
+            <p>+{c.phone}</p>
           </div>
           <button
             className="button secondary"
@@ -112,6 +107,11 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
         <div className="messages" ref={messagesRef}>
           {c.messages.map((m) => (
             <div key={m.id} className={`message ${m.direction}`}>
+              {m.orderId && (
+                <span className="message-order">
+                  {w.orders.find((o) => o.id === m.orderId)?.number}
+                </span>
+              )}
               <p>{m.text}</p>
               <small>
                 {m.direction === 'note' ? 'Internal note · ' : ''}

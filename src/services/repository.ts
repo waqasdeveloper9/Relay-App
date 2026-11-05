@@ -16,6 +16,7 @@ const locks = new Map<string, Promise<unknown>>();
 export class ConflictError extends Error {}
 const include = {
   workspace: true,
+  conversations: { include: { messages: { orderBy: { createdAt: 'asc' as const } } } },
   shopifyIntegration: true,
   whatsappIntegration: true,
   orders: {
@@ -116,24 +117,19 @@ function hydrate(m: Row): Store {
         tags: o.tags,
         createdAt: o.createdAt.toISOString(),
       })),
-      conversations: m.orders.flatMap((o) =>
-        o.conversation
-          ? [
-              {
-                id: o.conversation.id,
-                orderId: o.id,
-                human: o.conversation.human,
-                unread: o.conversation.unread,
-                messages: o.conversation.messages.map((msg) => ({
-                  id: msg.id,
-                  direction: msg.direction as Conversation['messages'][number]['direction'],
-                  text: msg.text,
-                  createdAt: msg.createdAt.toISOString(),
-                })),
-              },
-            ]
-          : [],
-      ),
+      conversations: m.conversations.map((c) => ({
+        id: c.id,
+        orderId: c.orderId ?? undefined,
+        phone: c.phone ?? undefined,
+        human: c.human,
+        unread: c.unread,
+        messages: c.messages.map((msg) => ({
+          id: msg.id,
+          direction: msg.direction as Conversation['messages'][number]['direction'],
+          text: msg.text,
+          createdAt: msg.createdAt.toISOString(),
+        })),
+      })),
       tasks: m.orders.flatMap((o) =>
         o.tasks.map((t) => ({
           id: t.id,
@@ -237,7 +233,12 @@ async function persist(
     });
   }
   for (const c of changed(before.conversations, after.conversations)) {
-    const value = { orderId: c.orderId, human: c.human, unread: c.unread };
+    const value = {
+      orderId: c.orderId ?? null,
+      phone: c.phone ?? null,
+      human: c.human,
+      unread: c.unread,
+    };
     await tx.conversation.upsert({
       where: { merchantId_id: { merchantId, id: c.id } },
       create: { id: c.id, merchantId, ...value },

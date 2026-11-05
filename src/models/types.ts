@@ -45,7 +45,8 @@ export interface Message {
 }
 export interface Conversation {
   id: string;
-  orderId: string;
+  orderId?: string;
+  phone?: string;
   human: boolean;
   unread: boolean;
   messages: Message[];

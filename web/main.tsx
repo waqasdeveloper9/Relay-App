@@ -1,3 +1,4 @@
+import { customerConversations } from '../src/models/customer-conversations';
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -267,8 +268,10 @@ function App() {
             >
               <Icon size={19} />
               <span>{name}</span>
-              {name === 'Inbox' && w.conversations.filter((c) => c.unread).length > 0 && (
-                <span className="nav-count">{w.conversations.filter((c) => c.unread).length}</span>
+              {name === 'Inbox' && customerConversations(w).filter((c) => c.unread).length > 0 && (
+                <span className="nav-count">
+                  {customerConversations(w).filter((c) => c.unread).length}
+                </span>
               )}
               {name === 'Automations' && <span className="nav-new">NEW</span>}
             </button>
@@ -405,14 +408,14 @@ function App() {
         </header>
         <main>
           <div
-            className={`page-heading ${['Orders', 'Messages', 'Integrations'].includes(page) ? 'compact-heading' : ''}`}
+            className={`page-heading ${['Orders', 'Messages', 'Integrations', 'Inbox'].includes(page) ? 'compact-heading' : ''}`}
           >
             <div>
-              {!['Orders', 'Messages', 'Integrations'].includes(page) && (
+              {!['Orders', 'Messages', 'Integrations', 'Inbox'].includes(page) && (
                 <div className="eyebrow">YOUR COMMERCE, CONNECTED</div>
               )}
               <h1>{page === 'Overview' ? 'A little less busywork.' : page}</h1>
-              {!['Orders', 'Messages', 'Integrations'].includes(page) && (
+              {!['Orders', 'Messages', 'Integrations', 'Inbox'].includes(page) && (
                 <p>
                   {
                     {

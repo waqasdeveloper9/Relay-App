@@ -1,3 +1,4 @@
+import { customerConversation } from './automation.js';
 import { z } from 'zod';
 import { getStore, mutate } from './repository.js';
 import {
@@ -232,10 +233,10 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
                 ? candidates[0]
                 : undefined;
           if (!order) {
-            activity(
-              w,
-              'An inbound message could not be safely matched to an order. Manual review required.',
-            );
+            const c = customerConversation(w, message.from);
+            append(c, 'in', message.text?.body ?? message.button?.text ?? '[Unsupported message]');
+            c.unread = true;
+            activity(w, 'Customer message received in Inbox without an order association.');
             w.processedEvents.push(eventKey);
             return;
           }

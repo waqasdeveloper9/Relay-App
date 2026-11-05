@@ -41,6 +41,7 @@ model Merchant {
   workspace Workspace?
   shopifyIntegration ShopifyIntegration?
   whatsappIntegration WhatsAppIntegration?
+  conversations Conversation[]
   orders OrderLog[]
   activities Activity[]
   receipts WebhookReceipt[]
@@ -137,14 +138,17 @@ model OrderLog {
 model Conversation {
   id String @id @default(uuid())
   merchantId String
-  orderId String @unique
-  order OrderLog @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
+  phone String?
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderId String? @unique
+  order OrderLog? @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
   human Boolean @default(false)
   unread Boolean @default(false)
   messages Message[]
   @@unique([merchantId, orderId])
   @@unique([merchantId, id])
   @@index([merchantId, unread])
+  @@index([merchantId, phone])
 }
 model Message {
   id String @id @default(uuid())

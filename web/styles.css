@@ -3046,3 +3046,54 @@ tbody tr:hover {
     flex-basis: 100%;
   }
 }
+
+/* Customer Inbox keeps the conversation visible at narrow widths. */
+.inbox-layout {
+  min-width: 0;
+}
+.chat {
+  min-width: 0;
+}
+.message {
+  overflow-wrap: anywhere;
+}
+.message-order {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 6px;
+}
+.page-heading.compact-heading {
+  margin-bottom: 18px;
+  padding-top: 0;
+}
+@media (max-width: 700px) {
+  .inbox-layout .chat-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .inbox-layout .chat-header .button {
+    margin-left: 0;
+    padding: 10px 12px;
+  }
+  .inbox-layout .chat-mode {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 14px;
+  }
+  .inbox-layout .messages {
+    max-height: 55dvh;
+    min-height: 240px;
+  }
+  .inbox-layout .composer {
+    padding: 14px;
+  }
+  .inbox-layout .composer-bottom {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .inbox-layout .conversation-item small {
+    font-size: 11px;
+  }
+}

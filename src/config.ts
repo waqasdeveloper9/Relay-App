@@ -22,7 +22,7 @@ export const config = {
   encryptionKey: demo ? randomBytes(32).toString('base64') : required('ENCRYPTION_KEY'),
   shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? '',
   shopifySecret: process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_APP_SECRET || '',
-  shopifyScopes: ['write_orders'],
+  shopifyScopes: ['write_orders', 'read_legal_policies'],
   serveWeb: process.env.SERVE_WEB === 'true' || process.env.NODE_ENV === 'production',
   metaSecret: '',
   metaVerifyToken: '',

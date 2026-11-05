@@ -38,7 +38,7 @@ export function assertScopes(granted: string, required = config.shopifyScopes): 
     )
   )
     throw new InputError(
-      'Shopify did not grant the required order permissions. Reconnect and approve access.',
+      'Shopify did not grant the required order and policy permissions. Reconnect and approve access.',
     );
 }
 export async function requestShopifyToken(

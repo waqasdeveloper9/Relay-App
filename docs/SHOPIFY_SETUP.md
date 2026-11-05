@@ -20,7 +20,7 @@ In the Relay app's Shopify Dev Dashboard version:
 
 - Set App URL and Allowed redirection URL to the exact values above.
 - Disable embedding in the Shopify admin; Relay is a standalone dashboard.
-- Keep `write_orders` as the required scope and webhook API version `2026-10`.
+- Require `write_orders` and `read_legal_policies`, and keep the webhook API version at `2026-10`.
 - Keep legacy installation disabled and release the updated configuration.
 - Ensure the app's distribution permits the intended store to install it. A custom-distributed single-client pilot and a public multi-merchant app have different distribution/review requirements; do not choose a distribution method casually because it cannot simply be switched later.
 

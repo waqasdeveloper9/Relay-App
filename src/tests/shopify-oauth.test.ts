@@ -15,7 +15,7 @@ let server: Server;
 let base: string;
 const realFetch = globalThis.fetch;
 let exchanges = 0;
-let grantedScope = 'write_orders';
+let grantedScope = 'write_orders,read_legal_policies';
 let providerFails = false;
 let refreshes = 0;
 const subscriptions: { id: string; topic: string; uri: string }[] = [];
@@ -157,7 +157,10 @@ test('OAuth uses a secure browser nonce and exact configured HTTPS callback', as
     flow.authorization.searchParams.get('redirect_uri'),
     `${config.appUrl}/api/integrations/shopify/callback`,
   );
-  assert.equal(flow.authorization.searchParams.get('scope'), 'write_orders');
+  assert.equal(
+    flow.authorization.searchParams.get('scope'),
+    'write_orders,read_legal_policies',
+  );
   assert.equal(flow.state.length, 43);
   assert.match(flow.response.headers.get('set-cookie')!, /HttpOnly/);
   assert.match(flow.response.headers.get('set-cookie')!, /SameSite=Lax/);
@@ -238,7 +241,7 @@ test('provider rejection and missing scopes do not leave a verified connection',
   response = await request(callback(flow), flow.cookie);
   assert.match(response.headers.get('location')!, /shopify=failed/);
   assert.equal((await getStore(owner.id))!.workspace.integration.shopifyToken, '');
-  grantedScope = 'write_orders';
+  grantedScope = 'write_orders,read_legal_policies';
 });
 test('expired offline tokens refresh and refreshed secrets stay server-side', async () => {
   const owner = await merchant();

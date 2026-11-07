@@ -157,10 +157,7 @@ test('OAuth uses a secure browser nonce and exact configured HTTPS callback', as
     flow.authorization.searchParams.get('redirect_uri'),
     `${config.appUrl}/api/integrations/shopify/callback`,
   );
-  assert.equal(
-    flow.authorization.searchParams.get('scope'),
-    'write_orders,read_legal_policies',
-  );
+  assert.equal(flow.authorization.searchParams.get('scope'), 'write_orders,read_legal_policies');
   assert.equal(flow.state.length, 43);
   assert.match(flow.response.headers.get('set-cookie')!, /HttpOnly/);
   assert.match(flow.response.headers.get('set-cookie')!, /SameSite=Lax/);

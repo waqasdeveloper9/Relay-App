@@ -40,3 +40,9 @@ Public SaaS work remains: production consent/onboarding, account recovery and em
 Older README and operational paragraphs contain historical limits; the current implementation and regression tests must be checked when those descriptions conflict. Do not copy live identifiers, secrets, or temporary tunnel addresses into specifications.
 
 Inbox groups order threads and general replies by customer phone inside each merchant workspace. Order labels preserve message context; ambiguous free-text replies never select an order or trigger Shopify actions. General live replies remain unavailable.
+
+## Planned WhatsApp support replies
+
+Use rules and merchant-editable reply text first. Automate read-only order status and tracking. Verify incoming Meta events and match the merchant, sender, customer, and Relay conversation before replying. Prefer a direct reply to a Relay message or an explicit order number verified against the customer. Ask for the order number if several orders could match. Keep unrelated chats silent and hand off unclear requests or order changes to staff.
+
+Read current order facts from Shopify and send through the merchant's WhatsApp sender. Use free-form replies only within 24 hours of the customer's latest message. Skip automated follow-ups outside that window in the initial release. Record replies and delivery outcomes in the Inbox. Proposed billing: Relay adds no per-reply fee for these service replies. Provider charges for other message types are separate.

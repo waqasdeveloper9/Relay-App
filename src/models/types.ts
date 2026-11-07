@@ -70,7 +70,8 @@ export interface Job {
     | 'TEST_CONFIRMATION'
     | 'CANCEL'
     | 'CANCEL_TAGS'
-    | 'CANCEL_CLEANUP';
+    | 'CANCEL_CLEANUP'
+    | `SUPPORT_REPLY:${string}`;
   state: 'QUEUED' | 'DONE' | 'FAILED' | 'UNKNOWN';
   attempts: number;
   claimedAt?: string;

@@ -215,3 +215,37 @@ export async function syncCancellationTags(
       throw new ProviderError('Shopify could not apply the cancellation request tag');
   }
 }
+
+export async function sendSupportText(
+  integration: Integration,
+  recipient: string,
+  body: string,
+  correlationId: string,
+): Promise<string> {
+  if (
+    !/^\d+$/.test(integration.phoneNumberId) ||
+    !integration.whatsappToken ||
+    !integration.whatsappVerifiedAt
+  )
+    throw new ProviderError('Save and verify the WhatsApp connection first');
+  return metaMessageId(
+    await request(
+      `https://graph.facebook.com/${config.metaVersion}/${integration.phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${decrypt(integration.whatsappToken)}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: recipient,
+          biz_opaque_callback_data: correlationId,
+          type: 'text',
+          text: { body },
+        }),
+      },
+      true,
+    ),
+  );
+}

@@ -1,11 +1,13 @@
 import { config } from '../config.js';
-import { readyStores, mutate } from './repository.js';
+import { isSupportReply, supportReplyContext, supportReplyText } from './support-replies.js';
+import { readyStores, mutate, getStore } from './repository.js';
 import { activity, append, canSend, conversation, enqueue } from './automation.js';
 import {
   addOrderTag,
   syncCancellationTags,
   ProviderError,
   sendHelloWorldTest,
+  sendSupportText,
 } from './providers.js';
 import { orderTestAllowed } from './order-test.js';
 import { freshShopifyIntegration } from './shopify-tokens.js';
@@ -39,7 +41,7 @@ export async function tick(): Promise<void> {
             j.error = undefined;
             resolveNotification(s.workspace, 'job:' + j.id);
             const o = s.workspace.orders.find((o) => o.id === j.orderId);
-            if (o && !o.confirmationExpiresAt)
+            if (o && !isSupportReply(j.kind) && !o.confirmationExpiresAt)
               o.confirmationExpiresAt = new Date(
                 Date.parse(receipt.createdAt) +
                   reliability(s.workspace).maxMessageAgeHours * 3600000,
@@ -85,6 +87,46 @@ export async function tick(): Promise<void> {
       const order = claimed.workspace.orders.find((o) => o.id === candidate.orderId);
       let historyId: string | undefined;
       try {
+        if (isSupportReply(candidate.kind)) {
+          const context = supportReplyContext(claimed, candidate, order);
+          const reply = await supportReplyText(id, order!, context.intent);
+          historyId = await beginMessage(id, {
+            orderId: context.intent === 'clarify' ? undefined : order!.id,
+            jobId: candidate.id,
+            kind: 'SUPPORT_REPLY',
+            recipient: context.phone,
+            templateName: '',
+            languageCode: '',
+            preview: reply,
+          });
+          const current = (await getStore(id))!;
+          supportReplyContext(
+            current,
+            candidate,
+            current.workspace.orders.find((o) => o.id === candidate.orderId),
+          );
+          const messageId = await sendSupportText(
+            current.workspace.integration,
+            context.phone,
+            reply,
+            historyId,
+          );
+          await updateMessage(id, historyId, { status: 'ACCEPTED', messageId });
+          await mutate(id, (s) => {
+            const job = s.workspace.jobs.find((j) => j.id === candidate.id)!;
+            Object.assign(job, {
+              state: 'DONE',
+              messageId,
+              claimedAt: undefined,
+              error: undefined,
+              retryable: false,
+            });
+            const thread = s.workspace.conversations.find((c) => c.id === context.conversationId);
+            if (thread) append(thread, 'out', reply);
+            resolveNotification(s.workspace, 'job:' + job.id);
+          });
+          continue;
+        }
         if (
           order &&
           !['TAG', 'CANCEL', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(candidate.kind) &&

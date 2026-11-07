@@ -83,7 +83,11 @@ export function Messages({
                   <td>{new Date(m.createdAt).toLocaleString()}</td>
                   <td>
                     {w.orders.find((o) => o.id === m.orderId)?.number ??
-                      (m.orderId ? 'Removed order' : 'Sample test')}
+                      (m.orderId
+                        ? 'Removed order'
+                        : m.kind === 'SUPPORT_REPLY'
+                          ? 'Support reply'
+                          : 'Sample test')}
                   </td>
                   <td>+{m.recipient}</td>
                   <td>

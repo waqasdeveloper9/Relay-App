@@ -637,3 +637,69 @@ test('customer inbox retains messages without any order', async () => {
   assert.equal(customerConversations(w)[0]?.messages[0]?.text, 'Hello');
   assert.equal(w.orders.length, 0);
 });
+
+test('support replies require a recent Relay conversation and clarify multiple orders', async () => {
+  const { queueSupportReply } = await import('../services/support-replies.js');
+  const { metaCallbackUrl } = await import('../services/meta-webhook-settings.js');
+  const store = fixture();
+  const prior = { demo: config.demo, webhookUrl: config.webhookUrl };
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const from = '923001234567';
+  const input = { from, body: 'Where is my order?', timestamp: String(Math.floor(now / 1000)) };
+  try {
+    config.demo = false;
+    config.webhookUrl = 'https://test-callback.invalid';
+    Object.assign(store.workspace.integration, {
+      phoneNumberId: 'test-sender',
+      wabaId: 'test-waba',
+      metaAppSecret: 'test-secret',
+      metaVerifyTokenHash: 'test-hash',
+      metaWebhookVerifiedAt: createdAt,
+      metaWebhookUrl: metaCallbackUrl(store.merchant.id),
+      whatsappToken: 'test-token',
+      whatsappVerifiedAt: createdAt,
+      templateName: 'test_confirmation',
+      languageCode: 'en',
+    });
+    store.workspace.settings.tracking = true;
+    store.workspace.settings.metaSubscription = { wabaId: 'test-waba', verifiedAt: createdAt };
+    store.workspace.settings.reliability = {
+      ...defaultReliability,
+      testMode: {
+        recipient: from,
+        template: 'test_confirmation',
+        until: new Date(now + 60000).toISOString(),
+      },
+    };
+    assert.equal(queueSupportReply(store, input, now), false);
+    const seed = demoWorkspace().orders[0]!;
+    store.workspace.orders = ['1', '2'].map((id) => ({
+      ...seed,
+      id,
+      phone: from,
+      number: '#' + id,
+    }));
+    store.workspace.outboundMessages = store.workspace.orders.map((order) => ({
+      id: 'history-' + order.id,
+      orderId: order.id,
+      recipient: from,
+      messageId: 'wamid-' + order.id,
+      kind: 'TEST_CONFIRMATION',
+      status: 'ACCEPTED',
+      createdAt,
+      updatedAt: createdAt,
+      preview: 'Order confirmation',
+      templateName: 'test_confirmation',
+      languageCode: 'en',
+    }));
+    assert.equal(queueSupportReply(store, input, now), true);
+    assert.match(store.workspace.jobs.at(-1)!.kind, /^SUPPORT_REPLY:clarify:/);
+    assert.equal(queueSupportReply(store, { ...input, quotedId: 'wamid-2' }, now), true);
+    assert.equal(store.workspace.jobs.at(-1)!.orderId, '2');
+    assert.equal(queueSupportReply(store, { ...input, quotedId: 'unrelated' }, now), false);
+    assert.equal(queueSupportReply(store, { ...input, body: 'Cancel my order' }, now), false);
+  } finally {
+    Object.assign(config, prior);
+  }
+});

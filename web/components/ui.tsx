@@ -290,7 +290,9 @@ export function OrderTable({
               {messages && (
                 <td>
                   {(() => {
-                    const m = messages.find((m) => m.orderId === o.id);
+                    const m = messages.find(
+                      (m) => m.orderId === o.id && m.kind !== 'SUPPORT_REPLY',
+                    );
                     return (
                       <>
                         <span

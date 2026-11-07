@@ -1,3 +1,4 @@
+import { queueSupportReply } from './support-replies.js';
 import { customerConversation } from './automation.js';
 import { z } from 'zod';
 import { getStore, mutate } from './repository.js';
@@ -70,6 +71,7 @@ export const metaPayload = z.object({
                 z.object({
                   id: z.string(),
                   from: z.string(),
+                  timestamp: z.string().regex(/^\d+$/).optional(),
                   text: z.object({ body: z.string().max(4000) }).optional(),
                   context: z.object({ id: z.string() }).optional(),
                   button: z.object({ payload: z.string(), text: z.string() }).optional(),
@@ -217,6 +219,19 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
                   'warning',
                 );
             }
+            w.processedEvents.push(eventKey);
+            return;
+          }
+          if (
+            !button &&
+            message.text &&
+            queueSupportReply(s, {
+              from: message.from,
+              body: message.text.body,
+              timestamp: message.timestamp,
+              quotedId: message.context?.id,
+            })
+          ) {
             w.processedEvents.push(eventKey);
             return;
           }

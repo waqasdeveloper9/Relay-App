@@ -79,10 +79,8 @@ export async function auth(req: Request, res: Response, next: NextFunction): Pro
     req.store = store;
     next();
   } catch {
-    res
-      .status(503)
-      .json({
-        error: 'The database is temporarily unavailable. Your session is retained; retry shortly.',
-      });
+    res.status(503).json({
+      error: 'The database is temporarily unavailable. Your session is retained; retry shortly.',
+    });
   }
 }

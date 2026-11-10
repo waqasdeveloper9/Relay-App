@@ -703,3 +703,191 @@ test('support replies require a recent Relay conversation and clarify multiple o
     Object.assign(config, prior);
   }
 });
+
+test('casual greetings keep assistant active so orderless Shopify policy questions auto-reply via worker', async () => {
+  const { queueSupportReply } = await import('../services/support-replies.js');
+  const { metaCallbackUrl } = await import('../services/meta-webhook-settings.js');
+  const { inboxReplyEligibility } = await import('../models/inbox-eligibility.js');
+  const s = fixture();
+  const prior = {
+    demo: config.demo,
+    outbound: config.outbound,
+    webhookUrl: config.webhookUrl,
+  };
+  const originalFetch = globalThis.fetch;
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const from = '923001234567';
+  try {
+    config.demo = false;
+    config.outbound = true;
+    config.webhookUrl = 'https://test-callback.invalid';
+    Object.assign(s.workspace.integration, {
+      shopDomain: 'policy-store.myshopify.com',
+      shopifyToken: encrypt('fake-shopify-token'),
+      phoneNumberId: '888777666',
+      wabaId: '555444333',
+      metaAppSecret: encrypt('secret'),
+      metaVerifyTokenHash: 'hash',
+      metaWebhookVerifiedAt: createdAt,
+      metaWebhookUrl: metaCallbackUrl(s.merchant.id),
+      whatsappToken: encrypt('fake-meta-token'),
+      whatsappVerifiedAt: createdAt,
+      templateName: 'relay_order_confirmation_v1',
+      languageCode: 'en',
+    });
+    s.workspace.settings.faqs = true;
+    s.workspace.settings.metaSubscription = { wabaId: '555444333', verifiedAt: createdAt };
+    await createStore(s);
+
+    const metaMsg = (id: string, body: string) => ({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: '888777666' },
+                messages: [{ id, from, timestamp: String(Math.floor(now / 1000)), text: { body } }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    await processMetaEvent(s.merchant.id, metaMsg('m-greet-1', 'Hehehe'));
+    await processMetaEvent(s.merchant.id, metaMsg('m-greet-2', 'Hi there'));
+    const afterGreeting = (await getStore(s.merchant.id))!;
+    assert.equal(afterGreeting.workspace.conversations[0]!.human, false);
+    assert.equal(afterGreeting.workspace.jobs.length, 0);
+
+    // Eligibility helper allows reply within 24h inbound window
+    assert.equal(
+      inboxReplyEligibility(
+        {
+          mode: 'connected',
+          outboundEnabled: true,
+          metaWebhookConfigured: true,
+          merchant: afterGreeting.merchant,
+          workspace: afterGreeting.workspace,
+        },
+        afterGreeting.workspace.conversations[0]!,
+        now,
+      ).allowed,
+      true,
+    );
+
+    // Escalation mixed with policy keyword still refuses auto-reply
+    assert.equal(
+      queueSupportReply(
+        afterGreeting,
+        {
+          from,
+          body: 'Wrong item delivered, what is your return policy?',
+          timestamp: String(Math.floor(now / 1000)),
+        },
+        now,
+      ),
+      false,
+    );
+    assert.equal(
+      queueSupportReply(
+        afterGreeting,
+        {
+          from,
+          body: 'I want to return my order, return policy?',
+          timestamp: String(Math.floor(now / 1000)),
+        },
+        now,
+      ),
+      false,
+    );
+
+    // Orderless policy inquiry queues SUPPORT_REPLY without orderId
+    await processMetaEvent(s.merchant.id, metaMsg('m-policy-1', 'I want to ask about policies'));
+    const queuedStore = (await getStore(s.merchant.id))!;
+    assert.equal(queuedStore.workspace.jobs.length, 1);
+    assert.equal(queuedStore.workspace.jobs[0]!.orderId, undefined);
+    assert.match(queuedStore.workspace.jobs[0]!.kind, /^SUPPORT_REPLY:policy:/);
+
+    const sentBodies: string[] = [];
+    globalThis.fetch = async (url, options) => {
+      if (String(url).startsWith('https://policy-store.myshopify.com/')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              shop: {
+                shopPolicies: [
+                  {
+                    type: 'SHIPPING_POLICY',
+                    title: 'Shipping policy',
+                    url: 'https://policy-store.myshopify.com/policies/shipping-policy',
+                    body: '<p>We dispatch in <strong>24 hours</strong> &amp; deliver in 2-4 days.</p>',
+                  },
+                  {
+                    type: 'REFUND_POLICY',
+                    title: 'Refund policy',
+                    url: 'https://policy-store.myshopify.com/policies/refund-policy',
+                    body: '<p>Returns accepted within 7 days of delivery.</p>',
+                  },
+                ],
+              },
+            },
+          }),
+        );
+      }
+      if (String(url).includes('/888777666/messages')) {
+        const parsed = JSON.parse(String(options?.body)) as {
+          type: string;
+          text: { body: string };
+          biz_opaque_callback_data: string;
+        };
+        assert.equal(parsed.type, 'text');
+        assert.ok(parsed.biz_opaque_callback_data);
+        sentBodies.push(parsed.text.body);
+        return new Response(
+          JSON.stringify({ messages: [{ id: 'wamid.policy.' + sentBodies.length }] }),
+        );
+      }
+      return originalFetch(url, options);
+    };
+
+    await tick();
+    const afterPolicy = (await getStore(s.merchant.id))!;
+    assert.equal(afterPolicy.workspace.jobs[0]!.state, 'DONE');
+    assert.equal(sentBodies.length, 1);
+    assert.match(sentBodies[0]!, /Shipping policy: https:\/\/policy-store\.myshopify\.com/);
+    assert.match(sentBodies[0]!, /Return & refund policy: https:\/\/policy-store\.myshopify\.com/);
+    assert.equal(afterPolicy.workspace.conversations[0]!.messages.at(-1)!.direction, 'out');
+    assert.equal(afterPolicy.workspace.outboundMessages?.[0]?.kind, 'SUPPORT_REPLY');
+
+    // Specific shipping policy and return policy questions work without an order too
+    await processMetaEvent(s.merchant.id, metaMsg('m-ship-1', 'What is your shipping policy?'));
+    await tick();
+    await processMetaEvent(s.merchant.id, metaMsg('m-refund-1', 'What is your return policy?'));
+    await tick();
+    assert.equal(sentBodies.length, 3);
+    assert.match(sentBodies[1]!, /24 hours & deliver in 2-4 days/);
+    assert.match(sentBodies[2]!, /Returns accepted within 7 days/);
+
+    // Human takeover stops auto-replies
+    await processMetaEvent(s.merchant.id, metaMsg('m-cancel-1', 'Please cancel my order'));
+    const takenOver = (await getStore(s.merchant.id))!;
+    assert.equal(takenOver.workspace.conversations[0]!.human, true);
+    assert.equal(
+      queueSupportReply(
+        takenOver,
+        {
+          from,
+          body: 'I want to ask about policies',
+          timestamp: String(Math.floor(now / 1000)),
+        },
+        now,
+      ),
+      false,
+    );
+  } finally {
+    Object.assign(config, prior);
+    globalThis.fetch = originalFetch;
+  }
+});

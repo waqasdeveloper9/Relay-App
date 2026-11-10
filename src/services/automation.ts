@@ -218,7 +218,7 @@ export function handleIncoming(
 export function customerConversation(w: Workspace, phone: string): Conversation {
   let c = w.conversations.find((c) => !c.orderId && c.phone === phone);
   if (!c) {
-    c = { id: randomUUID(), phone, human: true, unread: true, messages: [] };
+    c = { id: randomUUID(), phone, human: false, unread: true, messages: [] };
     w.conversations.unshift(c);
   }
   return c;

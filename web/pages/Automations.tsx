@@ -118,7 +118,7 @@ export function Automations({
                   <div>
                     <strong>
                       {j.kind.toLowerCase().replace('_', ' ')} ·{' '}
-                      {w.orders.find((o) => o.id === j.orderId)?.number}
+                      {w.orders.find((o) => o.id === j.orderId)?.number ?? 'General support'}
                     </strong>
                     <small>
                       {j.error ??

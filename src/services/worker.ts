@@ -89,9 +89,9 @@ export async function tick(): Promise<void> {
       try {
         if (isSupportReply(candidate.kind)) {
           const context = supportReplyContext(claimed, candidate, order);
-          const reply = await supportReplyText(id, order!, context.intent);
+          const reply = await supportReplyText(claimed, context.intent, order);
           historyId = await beginMessage(id, {
-            orderId: context.intent === 'clarify' ? undefined : order!.id,
+            orderId: context.intent === 'clarify' ? undefined : order?.id,
             jobId: candidate.id,
             kind: 'SUPPORT_REPLY',
             recipient: context.phone,
@@ -370,7 +370,7 @@ export async function tick(): Promise<void> {
           }
           activity(
             s.workspace,
-            `${candidate.kind.toLowerCase()} needs attention for ${order?.number ?? 'order'}`,
+            `${candidate.kind.toLowerCase()} needs attention for ${order?.number ?? 'support reply'}`,
           );
         });
       }

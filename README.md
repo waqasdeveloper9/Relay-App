@@ -42,8 +42,8 @@ This is a working development MVP, **not a public production SaaS release**.
 | ------------------------------- | ------------------------------ | ------------------------------------------------------------------------------ |
 | COD confirmation workflow       | Fully simulated                | Template adapter exists; outbound disabled by default                          |
 | Integration check               | Explicitly simulated           | Real provider metadata request                                                 |
-| Customer replies                | Simulated inbound and outbound | Signed inbound messages; suggested replies recorded as internal notes          |
-| Human inbox reply               | Simulated                      | Sending disabled in this release                                               |
+| Customer replies                | Simulated inbound and outbound | Signed inbound messages; rule-based order/policy replies & internal notes      |
+| Human inbox reply               | Simulated                      | Live WhatsApp text replies within the 24-hour customer window                  |
 | Address/cancel/refund execution | Manual action + evidence       | Manual action + evidence                                                       |
 | Tracking                        | Seeded order state             | Intake only; continuous fulfillment/courier synchronization is not implemented |
 | Persistence                     | Volatile memory                | Prisma/PostgreSQL                                                              |

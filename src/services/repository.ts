@@ -19,6 +19,7 @@ const include = {
   conversations: { include: { messages: { orderBy: { createdAt: 'asc' as const } } } },
   shopifyIntegration: true,
   whatsappIntegration: true,
+  jobs: true,
   orders: {
     orderBy: { createdAt: 'desc' as const },
     include: {
@@ -140,20 +141,18 @@ function hydrate(m: Row): Store {
           createdAt: t.createdAt.toISOString(),
         })),
       ),
-      jobs: m.orders.flatMap((o) =>
-        o.jobs.map((j) => ({
-          id: j.id,
-          orderId: o.id,
-          kind: j.kind as Job['kind'],
-          state: j.state,
-          attempts: j.attempts,
-          dueAt: j.dueAt.toISOString(),
-          messageId: j.messageId ?? undefined,
-          error: j.error ?? undefined,
-          claimedAt: j.claimedAt?.toISOString(),
-          retryable: j.retryable,
-        })),
-      ),
+      jobs: m.jobs.map((j) => ({
+        id: j.id,
+        orderId: j.orderId ?? undefined,
+        kind: j.kind as Job['kind'],
+        state: j.state,
+        attempts: j.attempts,
+        dueAt: j.dueAt.toISOString(),
+        messageId: j.messageId ?? undefined,
+        error: j.error ?? undefined,
+        claimedAt: j.claimedAt?.toISOString(),
+        retryable: j.retryable,
+      })),
       activity: m.activities.map((a) => ({
         id: a.id,
         text: a.text,
@@ -263,6 +262,7 @@ async function persist(
     const { id, ...rest } = j;
     const value = {
       ...rest,
+      orderId: j.orderId ?? null,
       dueAt: new Date(j.dueAt),
       claimedAt: j.claimedAt ? new Date(j.claimedAt) : null,
       retryable: j.retryable ?? false,
@@ -563,16 +563,12 @@ export async function readyStores(): Promise<Store[]> {
   return (
     await prisma.merchant.findMany({
       where: {
-        orders: {
+        jobs: {
           some: {
-            jobs: {
-              some: {
-                OR: [
-                  { state: 'QUEUED', dueAt: { lte: now } },
-                  { state: 'UNKNOWN', claimedAt: { lt: stale } },
-                ],
-              },
-            },
+            OR: [
+              { state: 'QUEUED', dueAt: { lte: now } },
+              { state: 'UNKNOWN', claimedAt: { lt: stale } },
+            ],
           },
         },
       },

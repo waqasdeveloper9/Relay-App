@@ -49,6 +49,7 @@ model Merchant {
   outboundMessages OutboundMessage[]
   notifications MerchantNotification[]
   inboxEvents InboxEvent[]
+  jobs AutomationJob[]
   syncState ShopifySyncState?
 }
 model Workspace {
@@ -174,8 +175,9 @@ model CustomerRequest {
 model AutomationJob {
   id String @id @default(uuid())
   merchantId String
-  orderId String
-  order OrderLog @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderId String?
+  order OrderLog? @relation(fields: [merchantId, orderId], references: [merchantId, id], onDelete: Cascade)
   kind String
   state JobState @default(QUEUED)
   attempts Int @default(0)
@@ -185,6 +187,7 @@ model AutomationJob {
   claimedAt DateTime?
   retryable Boolean @default(false)
   @@unique([merchantId, orderId, kind])
+  @@index([merchantId, kind])
   @@index([state, dueAt])
   @@index([merchantId, messageId])
 }

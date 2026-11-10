@@ -133,14 +133,16 @@ export async function reconcileStaleSamples(): Promise<void> {
     await mutate(id, (s) => {
       for (const m of s.workspace.outboundMessages ?? [])
         if (!m.jobId && m.status === 'SENDING' && Date.parse(m.createdAt) < cutoff.getTime()) {
+          const isInboxReply = m.kind === 'INBOX_REPLY';
           m.status = 'UNKNOWN';
           m.updatedAt = new Date().toISOString();
-          m.error =
-            'The server stopped before the sample send outcome was recorded. Check provider history before sending another sample.';
+          m.error = isInboxReply
+            ? 'The server stopped before the live reply send outcome was recorded. Check WhatsApp and Meta provider logs before resending.'
+            : 'The server stopped before the sample send outcome was recorded. Check provider history before sending another sample.';
           notify(
             s.workspace,
             'message:' + m.id,
-            'Uncertain sample send',
+            isInboxReply ? 'Uncertain reply send' : 'Uncertain sample send',
             m.error,
             'Check WhatsApp and Meta provider logs before resending.',
           );

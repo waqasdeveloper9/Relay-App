@@ -1,4 +1,6 @@
-import { customerThreads } from '../models/customer-conversations.js';
+import { customerConversation } from '../services/automation.js';
+import { sendLiveInboxReply } from '../services/inbox-replies.js';
+import { conversationPhone, customerThreads } from '../models/customer-conversations.js';
 import { approveCancellation } from '../services/cancellation.js';
 import { applyBulkOrderAction } from '../services/order-operations.js';
 import type { Request, Response } from 'express';
@@ -373,12 +375,16 @@ export async function conversationAction(req: Request, res: Response): Promise<v
     res.status(403).json({ error: 'Simulation is disabled' });
     return;
   }
-  if (input.action === 'reply' && !config.demo) {
-    res.status(409).json({
-      error:
-        'Live inbox sending is not enabled in this release. Use your connected support channel.',
-    });
-    return;
+  if (input.action === 'reply') {
+    if (!input.text) throw new InputError('Message is required');
+    if (!config.demo) {
+      await sendLiveInboxReply(req.store, String(req.params.id), input.text);
+      res.json({
+        ok: true,
+        message: 'Message sent to WhatsApp (Meta accepted; delivery pending).',
+      });
+      return;
+    }
   }
   await mutate(req.merchantId, (s) => {
     const c = s.workspace.conversations.find((c) => c.id === req.params.id);
@@ -389,13 +395,17 @@ export async function conversationAction(req: Request, res: Response): Promise<v
     if (input.action === 'resume')
       for (const thread of customerThreads(s.workspace, c)) thread.human = false;
     if (input.action === 'reply') {
-      if (!input.text) throw new Error('Message is required');
-      c.human = true;
-      append(c, 'out', input.text);
+      if (!input.text) throw new InputError('Message is required');
+      for (const thread of customerThreads(s.workspace, c)) thread.human = true;
+      const phoneNumber = conversationPhone(s.workspace, c);
+      const target = phoneNumber ? customerConversation(s.workspace, phoneNumber) : c;
+      target.human = true;
+      target.unread = false;
+      append(target, 'out', input.text);
     }
     if (input.action === 'simulate') {
-      if (!input.text) throw new Error('Message is required');
-      const o = s.workspace.orders.find((o) => o.id === c.orderId)!;
+      if (!input.text) throw new InputError('Message is required');
+      const o = s.workspace.orders.find((o) => o.id === c.orderId);
       if (o) handleIncoming(s.workspace, o, input.text, true);
       else append(c, 'in', input.text);
     }

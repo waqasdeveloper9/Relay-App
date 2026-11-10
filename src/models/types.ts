@@ -61,7 +61,7 @@ export interface Task {
 }
 export interface Job {
   id: string;
-  orderId: string;
+  orderId?: string;
   kind:
     | 'CONFIRMATION'
     | 'REMINDER'

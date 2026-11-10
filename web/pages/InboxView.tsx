@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCheck, Send, Users, Zap } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Check, CheckCheck, Send, Users, Zap } from 'lucide-react';
 import { customerConversations } from '../../src/models/customer-conversations';
+import { inboxReplyEligibility } from '../../src/models/inbox-eligibility';
 import { api, type Snapshot } from '../api';
 import { initials, time, type Act } from '../lib/format';
 import { Empty } from '../components/ui';
@@ -13,7 +14,27 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
   const messagesRef = useRef<HTMLDivElement>(null);
   const readAttempts = useRef(new Set<string>());
   const [simulate, setSimulate] = useState(false);
+  const inputId = useId();
+  const hintId = useId();
   const c = threads.find((c) => (c.phone || c.id) === id) ?? threads[0];
+
+  const replyCheck = useMemo(
+    () =>
+      c
+        ? inboxReplyEligibility(
+            {
+              mode: data.mode,
+              outboundEnabled: data.outboundEnabled,
+              metaWebhookConfigured: data.metaWebhookConfigured ?? false,
+              merchant: data.merchant,
+              workspace: w,
+            },
+            c,
+          )
+        : { allowed: false, phone: '' },
+    [c, data.mode, data.outboundEnabled, data.metaWebhookConfigured, data.merchant, w],
+  );
+  const canCompose = data.mode === 'demo' || replyCheck.allowed;
 
   const draftKey = c ? `${c.id}:${simulate ? 'incoming' : 'outgoing'}` : '';
   const text = drafts[draftKey] ?? '';
@@ -39,6 +60,24 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
         />
       </section>
     );
+
+  function trackedStatus(msg: {
+    direction: 'in' | 'out' | 'note';
+    text: string;
+    createdAt: string;
+  }) {
+    if (msg.direction !== 'out' || data.mode === 'demo') return undefined;
+    const msgAt = Date.parse(msg.createdAt);
+    const match = (w.outboundMessages ?? []).find(
+      (o) =>
+        o.recipient === c!.phone &&
+        ['INBOX_REPLY', 'SUPPORT_REPLY'].includes(o.kind) &&
+        o.preview === msg.text &&
+        Math.abs(Date.parse(o.createdAt) - msgAt) < 120_000,
+    );
+    return match?.status ?? 'ACCEPTED';
+  }
+
   return (
     <div className="inbox-layout panel">
       <aside className="conversation-list">
@@ -50,6 +89,7 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
           return (
             <button
               key={con.id}
+              type="button"
               className={`conversation-item ${c.id === con.id ? 'active' : ''}`}
               onClick={() => setId(con.phone || con.id)}
             >
@@ -69,9 +109,10 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
           <span className="avatar purple">{initials(c.name)}</span>
           <div>
             <h2>{c.name}</h2>
-            <p>+{c.phone}</p>
+            <p>{c.phone ? '+' + c.phone : 'No phone recorded'}</p>
           </div>
           <button
+            type="button"
             className="button secondary"
             disabled={busy}
             onClick={() => {
@@ -84,12 +125,12 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
           >
             {c.human ? (
               <>
-                <Zap size={15} />
+                <Zap size={15} aria-hidden="true" />
                 Resume assistant
               </>
             ) : (
               <>
-                <Users size={15} />
+                <Users size={15} aria-hidden="true" />
                 Take over
               </>
             )}
@@ -101,30 +142,58 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
           <span>
             {data.mode === 'demo'
               ? 'All messages are simulated'
-              : 'Live replies are suggestions only'}
+              : replyCheck.allowed
+                ? 'Live reply pauses assistant and sends via WhatsApp'
+                : 'Live reply unavailable'}
           </span>
         </div>
         <div className="messages" ref={messagesRef}>
-          {c.messages.map((m) => (
-            <div key={m.id} className={`message ${m.direction}`}>
-              {m.orderId && (
-                <span className="message-order">
-                  {w.orders.find((o) => o.id === m.orderId)?.number}
-                </span>
-              )}
-              <p>{m.text}</p>
-              <small>
-                {m.direction === 'note' ? 'Internal note · ' : ''}
-                {time(m.createdAt)}
-                {m.direction === 'out' && <CheckCheck size={12} />}
-              </small>
-            </div>
-          ))}
+          {c.messages.map((m) => {
+            const outboundStatus = trackedStatus(m);
+            return (
+              <div key={m.id} className={`message ${m.direction}`}>
+                {m.orderId && (
+                  <span className="message-order">
+                    {w.orders.find((o) => o.id === m.orderId)?.number}
+                  </span>
+                )}
+                <p>{m.text}</p>
+                <small>
+                  {m.direction === 'note' ? 'Internal note · ' : ''}
+                  {time(m.createdAt)}
+                  {m.direction === 'out' &&
+                    (data.mode === 'demo' ? (
+                      <CheckCheck size={12} aria-hidden="true" />
+                    ) : outboundStatus === 'DELIVERED' || outboundStatus === 'READ' ? (
+                      <>
+                        {' · Delivered '}
+                        <CheckCheck size={12} aria-hidden="true" />
+                      </>
+                    ) : outboundStatus === 'SENT' ? (
+                      <>
+                        {' · Sent '}
+                        <CheckCheck size={12} aria-hidden="true" />
+                      </>
+                    ) : outboundStatus === 'UNKNOWN' ? (
+                      ' · Uncertain'
+                    ) : outboundStatus === 'FAILED' ? (
+                      ' · Failed'
+                    ) : (
+                      <>
+                        {' · Meta accepted '}
+                        <Check size={12} aria-hidden="true" />
+                      </>
+                    ))}
+                </small>
+              </div>
+            );
+          })}
         </div>
         <form
           className="composer"
           onSubmit={(e) => {
             e.preventDefault();
+            if (!canCompose || !text.trim() || busy) return;
             void act(
               async () => {
                 await api(`/conversations/${c.id}/action`, {
@@ -133,7 +202,11 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
                 });
                 setText('');
               },
-              simulate ? 'Customer message simulated' : 'Demo reply recorded',
+              simulate
+                ? 'Customer message simulated'
+                : data.mode === 'demo'
+                  ? 'Demo reply recorded'
+                  : 'Message sent to WhatsApp (Meta accepted)',
             );
           }}
         >
@@ -152,11 +225,24 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
               </button>
             )}
           </div>
+          <label htmlFor={inputId} className="sr-only">
+            {simulate ? 'Simulate incoming customer message' : 'Message text'}
+          </label>
           <textarea
-            aria-label="Message text"
-            disabled={busy || data.mode !== 'demo'}
+            id={inputId}
+            name="message"
+            aria-describedby={hintId}
+            enterKeyHint={simulate ? 'done' : 'send'}
+            disabled={busy || !canCompose}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                if (!busy && canCompose && text.trim()) e.currentTarget.form?.requestSubmit();
+              }
+            }}
             placeholder={
               simulate
                 ? 'Try: Confirm, Where is my parcel?, or Please change my address…'
@@ -165,16 +251,19 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
             maxLength={2000}
           />
           <div className="composer-bottom">
-            <small>
+            <small id={hintId}>
               {data.mode === 'demo'
                 ? 'No messages leave this demo workspace.'
-                : 'Live sending is not enabled in this release.'}
+                : replyCheck.allowed
+                  ? 'Sends via your connected WhatsApp sender within Meta’s 24-hour customer reply window.'
+                  : (replyCheck.reason ?? 'Live sending is unavailable for this conversation.')}
             </small>
             <button
+              type="submit"
               className="button primary"
-              disabled={busy || !text.trim() || data.mode !== 'demo'}
+              disabled={busy || !text.trim() || !canCompose}
             >
-              <Send size={15} />
+              <Send size={15} aria-hidden="true" />
               {simulate ? 'Simulate' : 'Send reply'}
             </button>
           </div>

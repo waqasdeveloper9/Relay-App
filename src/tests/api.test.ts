@@ -779,3 +779,225 @@ test('merchant cancellation requires explicit reason and confirmation and cannot
   );
   assert.equal(store.workspace.orders.find((o) => o.id === task.orderId)!.status, 'NEEDS_REVIEW');
 });
+
+test('PUT /settings updates and persists workspace settings', async () => {
+  const s = await session();
+  assert.equal(s.workspace.settings.confirmations, true);
+  const res = await request(
+    '/settings',
+    { ...s.workspace.settings, confirmations: false },
+    s.cookie,
+    'PUT',
+  );
+  assert.equal(res.status, 200);
+  const updated = (await (await request('/workspace', undefined, s.cookie)).json()) as any;
+  assert.equal(updated.workspace.settings.confirmations, false);
+});
+
+test('connected live Inbox reply sends via WhatsApp, pauses assistant, enforces 24h window/tenant scope, and stays conservative on failures', async () => {
+  const owner = await session();
+  const intruder = await session();
+  const { encrypt } = await import('../utils/security.js');
+  const { metaCallbackUrl } = await import('../services/meta-webhook-settings.js');
+  const { drainInbox } = await import('../services/inbox-worker.js');
+  const original = globalThis.fetch;
+  const prior = {
+    demo: config.demo,
+    outbound: config.outbound,
+    webhookUrl: config.webhookUrl,
+  };
+  const now = Date.now();
+  const createdAt = new Date(now).toISOString();
+  const customerPhone = '923001112233';
+  const metaSecret = 'c'.repeat(32);
+  let convId = '';
+  let orderConvId = '';
+  try {
+    config.demo = false;
+    config.outbound = true;
+    config.webhookUrl = 'https://relay-inbox-test.invalid';
+
+    await mutate(owner.merchant.id, (store) => {
+      Object.assign(store.workspace.integration, {
+        phoneNumberId: '777111222',
+        wabaId: '666111222',
+        whatsappToken: encrypt('meta-token'),
+        whatsappVerifiedAt: createdAt,
+        metaAppSecret: encrypt(metaSecret),
+        metaVerifyTokenHash: 'hash',
+        metaWebhookVerifiedAt: createdAt,
+        metaWebhookUrl: metaCallbackUrl(owner.merchant.id),
+        templateName: 'relay_order_confirmation_v1',
+        languageCode: 'en',
+      });
+      store.workspace.settings.metaSubscription = { wabaId: '666111222', verifiedAt: createdAt };
+      const order = store.workspace.orders[0]!;
+      order.phone = customerPhone;
+      const oc = store.workspace.conversations.find((c) => c.orderId === order.id)!;
+      oc.phone = customerPhone;
+      oc.human = false;
+      orderConvId = oc.id;
+      convId = randomUUID();
+      store.workspace.conversations.unshift({
+        id: convId,
+        phone: customerPhone,
+        human: false,
+        unread: true,
+        messages: [
+          {
+            id: randomUUID(),
+            direction: 'in',
+            text: 'I want to ask about policies',
+            createdAt: new Date(now - 60_000).toISOString(),
+          },
+        ],
+      });
+    });
+
+    // Cross-tenant attempt rejected
+    const foreignRes = await request(
+      '/conversations/' + convId + '/action',
+      { action: 'reply', text: 'Hi' },
+      intruder.cookie,
+    );
+    assert.equal(foreignRes.status, 404);
+
+    // Ambiguous failure (500) -> UNKNOWN + note + 502, no fake 'out' bubble
+    globalThis.fetch = async (url, options) => {
+      if (String(url).includes('/777111222/messages'))
+        return new Response('server error', { status: 500 });
+      return original(url, options);
+    };
+    const errRes = await request(
+      '/conversations/' + convId + '/action',
+      { action: 'reply', text: 'Checking your policy now' },
+      owner.cookie,
+    );
+    assert.equal(errRes.status, 502);
+    let afterErr = (await getStore(owner.merchant.id))!;
+    assert.equal(afterErr.workspace.outboundMessages?.[0]?.status, 'UNKNOWN');
+    assert.equal(
+      afterErr.workspace.conversations
+        .find((c) => c.id === convId)!
+        .messages.some((m) => m.direction === 'out'),
+      false,
+    );
+    assert.equal(
+      afterErr.workspace.conversations
+        .find((c) => c.id === convId)!
+        .messages.some((m) => m.direction === 'note'),
+      true,
+    );
+
+    // Definitive Meta 400 -> FAILED, no fake 'out' bubble
+    globalThis.fetch = async (url, options) => {
+      if (String(url).includes('/777111222/messages'))
+        return new Response(JSON.stringify({ error: { code: 131030 } }), { status: 400 });
+      return original(url, options);
+    };
+    const badRes = await request(
+      '/conversations/' + convId + '/action',
+      { action: 'reply', text: 'Checking again' },
+      owner.cookie,
+    );
+    assert.equal(badRes.status, 502);
+    afterErr = (await getStore(owner.merchant.id))!;
+    assert.equal(afterErr.workspace.outboundMessages?.[0]?.status, 'FAILED');
+    assert.equal(
+      afterErr.workspace.conversations
+        .find((c) => c.id === convId)!
+        .messages.some((m) => m.direction === 'out'),
+      false,
+    );
+
+    // Successful send -> ACCEPTED, human = true across threads, 'out' appended, status webhook updates to DELIVERED
+    let sentCorrelation = '';
+    globalThis.fetch = async (url, options) => {
+      if (String(url).includes('/777111222/messages')) {
+        const payload = JSON.parse(String(options?.body)) as {
+          to: string;
+          type: string;
+          text: { body: string };
+          biz_opaque_callback_data: string;
+        };
+        assert.equal(payload.to, customerPhone);
+        assert.equal(payload.type, 'text');
+        assert.equal(payload.text.body, 'Our shipping takes 2-4 working days nationwide.');
+        sentCorrelation = payload.biz_opaque_callback_data;
+        return new Response(JSON.stringify({ messages: [{ id: 'wamid.live.inbox.1' }] }));
+      }
+      return original(url, options);
+    };
+    const okRes = await request(
+      '/conversations/' + convId + '/action',
+      { action: 'reply', text: 'Our shipping takes 2-4 working days nationwide.' },
+      owner.cookie,
+    );
+    assert.equal(okRes.status, 200);
+    let afterOk = (await getStore(owner.merchant.id))!;
+    const msgRow = afterOk.workspace.outboundMessages![0]!;
+    assert.equal(msgRow.id, sentCorrelation);
+    assert.equal(msgRow.kind, 'INBOX_REPLY');
+    assert.equal(msgRow.status, 'ACCEPTED');
+    assert.equal(msgRow.messageId, 'wamid.live.inbox.1');
+    assert.equal(afterOk.workspace.conversations.find((c) => c.id === convId)!.human, true);
+    assert.equal(afterOk.workspace.conversations.find((c) => c.id === orderConvId)!.human, true);
+    assert.equal(
+      afterOk.workspace.conversations.find((c) => c.id === convId)!.messages.at(-1)!.direction,
+      'out',
+    );
+
+    // Delivery receipt updates status to DELIVERED via signed webhook
+    const receiptBody = JSON.stringify({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: '777111222' },
+                statuses: [
+                  {
+                    id: 'wamid.live.inbox.1',
+                    status: 'delivered',
+                    recipient_id: customerPhone,
+                    timestamp: String(Math.floor(Date.now() / 1000)),
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const receiptRes = await original(base + '/webhooks/meta/' + owner.merchant.id, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Hub-Signature-256':
+          'sha256=' + createHmac('sha256', metaSecret).update(receiptBody).digest('hex'),
+      },
+      body: receiptBody,
+    });
+    assert.equal(receiptRes.status, 200);
+    await drainInbox();
+    afterOk = (await getStore(owner.merchant.id))!;
+    assert.equal(afterOk.workspace.outboundMessages![0]!.status, 'DELIVERED');
+
+    // Expired >24h customer window rejects before calling Meta
+    await mutate(owner.merchant.id, (store) => {
+      for (const c of store.workspace.conversations)
+        for (const m of c.messages)
+          if (m.direction === 'in')
+            m.createdAt = new Date(Date.now() - 25 * 3600_000).toISOString();
+    });
+    const expiredRes = await request(
+      '/conversations/' + convId + '/action',
+      { action: 'reply', text: 'Late follow-up' },
+      owner.cookie,
+    );
+    assert.equal(expiredRes.status, 400);
+  } finally {
+    globalThis.fetch = original;
+    Object.assign(config, prior);
+  }
+});

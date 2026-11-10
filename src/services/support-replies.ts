@@ -9,10 +9,13 @@ import { ProviderError, shopifyGraphql } from './providers.js';
 import { freshShopifyIntegration } from './shopify-tokens.js';
 
 const windowMs = 24 * 60 * 60 * 1000;
+const orderWindowMs = 30 * 24 * 60 * 60 * 1000;
 const prefix = 'SUPPORT_REPLY:';
-type Intent = 'status' | 'tracking' | 'delivery' | 'clarify';
+type Intent = 'status' | 'tracking' | 'delivery' | 'refund_policy' | 'policy' | 'clarify';
 
 export const isSupportReply = (kind: string): boolean => kind.startsWith(prefix);
+export const isPolicyIntent = (intent?: string): boolean =>
+  intent === 'delivery' || intent === 'refund_policy' || intent === 'policy';
 
 function canReply(store: Store, phone: string): boolean {
   return (
@@ -30,17 +33,69 @@ function humanHandling(w: Workspace, phone: string): boolean {
   );
 }
 
+const shopPolicyLabels: Record<string, string> = {
+  SHIPPING_POLICY: 'Shipping policy',
+  REFUND_POLICY: 'Return & refund policy',
+  PRIVACY_POLICY: 'Privacy policy',
+  TERMS_OF_SERVICE: 'Terms of service',
+  TERMS_OF_SALE: 'Terms of sale',
+  CONTACT_INFORMATION: 'Contact information',
+  LEGAL_NOTICE: 'Legal notice',
+  SUBSCRIPTION_POLICY: 'Subscription policy',
+};
+
+export function policySummary(html?: string | null, max = 500): string {
+  if (!html) return '';
+  const text = html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|h[1-6]|tr)>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '\n- ')
+    .replace(/<\/li>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(?:39|x27);|&apos;/gi, "'")
+    .replace(/&ndash;/gi, '–')
+    .replace(/&mdash;/gi, '—')
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isInteger(code) && code >= 32 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : '';
+    })
+    .replace(/&#(\d+);/g, (_m, n) => {
+      const code = Number(n);
+      return Number.isInteger(code) && code >= 32 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : '';
+    })
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  const boundary = cut.lastIndexOf(' ');
+  return (boundary > max * 0.5 ? cut.slice(0, boundary) : cut).trimEnd() + '…';
+}
+
 export function queueSupportReply(
   store: Store,
   input: { from: string; body: string; timestamp?: string; quotedId?: string },
   now = Date.now(),
 ): boolean {
   const { from, body, timestamp, quotedId } = input;
-  const received = Number(timestamp) * 1000;
+  const received = timestamp !== undefined ? Number(timestamp) * 1000 : now;
   if (
     !Number.isFinite(received) ||
     received <= now - windowMs ||
-    received > now ||
+    received > now + 60_000 ||
     !/^\d{10,15}$/.test(from) ||
     !canReply(store, from)
   )
@@ -48,18 +103,46 @@ export function queueSupportReply(
   const w = store.workspace;
   if (humanHandling(w, from)) return false;
   const question = body.toLowerCase();
-  if (/\b(cancel|refund|return|change|edit|wrong|replace)\b/.test(question)) return false;
+  const asksPolicyTerm = /\bpolic(?:y|ies)\b/.test(question);
+  const hasActionOrIssue =
+    /\b(wrong|damag\w*|broken|missing|defective|leaking|complaint|human|agent|staff|representative)\b/.test(
+      question,
+    ) ||
+    /\b(cancel|refund|return|exchange|change|edit|replace)\s+(?:my|the|this|an|order|item|parcel|address|phone|number)\b/.test(
+      question,
+    ) ||
+    /\b(want|need|like)\s+to\s+(?:cancel|refund|return|exchange|change|replace)\b/.test(question) ||
+    (!asksPolicyTerm && /\b(cancel|refund|return|exchange|change|edit|replace)\b/.test(question));
+  if (hasActionOrIssue) return false;
+
   let intent: Intent;
   if (
-    /\b(delivery|deliver|arrive|shipping|ship)\b/.test(question) &&
-    /\b(how (?:many|long)|time|days|when)\b/.test(question)
+    (/\b(delivery|deliver|arrive|shipping|ship)\b/.test(question) &&
+      /\b(how (?:many|long)|time|days|when|polic(?:y|ies)|charge|charges|fee|cost|cod|cash on delivery|estimate)\b/.test(
+        question,
+      )) ||
+    /\b(?:shipping|delivery)\s+polic(?:y|ies)\b/.test(question)
   )
     intent = 'delivery';
+  else if (
+    asksPolicyTerm &&
+    /\b(return|refund|exchange|cancel(?:lation)?|money\s*back)\b/.test(question)
+  )
+    intent = 'refund_policy';
   else if (/\b(track(?:ing)?|courier|tracking number)\b/.test(question)) intent = 'tracking';
   else if (
-    /\b(where.*order|order status|status.*order|has.*shipped|where.*package)\b/.test(question)
+    /\b(where\s+(?:is|are).*(?:order|parcel|package)|order\s+status|status\b.*\border|has\s+(?:my\s+)?order\s+shipped|has\s+it\s+shipped)\b/.test(
+      question,
+    )
   )
     intent = 'status';
+  else if (
+    asksPolicyTerm ||
+    /\b(?:terms\s+(?:of\s+service|and\s+conditions|&\s*conditions)|privacy\s+polic(?:y|ies)|store\s+hours|support\s+hours|faqs?)\b/.test(
+      question,
+    )
+  )
+    intent = 'policy';
   else if (
     /^\s*#?[0-9][a-z0-9-]*\s*$/.test(question) &&
     w.jobs.some(
@@ -73,22 +156,29 @@ export function queueSupportReply(
     intent = 'status';
   else return false;
 
+  const policyIntent = isPolicyIntent(intent);
+  if (policyIntent ? !w.settings.faqs : !w.settings.tracking) return false;
+
   const orders = w.orders.filter((o) => o.phone === from && !o.archivedAt);
-  const sent = (w.outboundMessages ?? []).filter(
+  const allSent = (w.outboundMessages ?? []).filter(
     (m) =>
       m.recipient === from &&
-      m.orderId &&
       m.messageId &&
-      ['CONFIRMATION', 'REMINDER', 'TEST_CONFIRMATION'].includes(m.kind) &&
       ['ACCEPTED', 'SENT', 'DELIVERED', 'READ'].includes(m.status),
   );
-  const quoted = sent.find((m) => m.messageId === quotedId);
+  const orderSent = allSent.filter(
+    (m) => m.orderId && ['CONFIRMATION', 'REMINDER', 'TEST_CONFIRMATION'].includes(m.kind),
+  );
+  const quoted = (policyIntent ? allSent : orderSent).find((m) => m.messageId === quotedId);
+  if (quotedId && !quoted) return false;
+
   const active = orders.filter((o) =>
-    sent.some(
-      (m) => m.orderId === o.id && (m === quoted || Date.parse(m.createdAt) > now - windowMs),
+    orderSent.some(
+      (m) => m.orderId === o.id && (m === quoted || Date.parse(m.createdAt) > now - orderWindowMs),
     ),
   );
-  if (!active.length || (quotedId && !quoted)) return false;
+  if (!policyIntent && !active.length) return false;
+
   const mentioned = [...question.matchAll(/#([a-z0-9-]+)|\border\s+([0-9][a-z0-9-]*)\b/g)].map(
     (match) => match[1] ?? match[2],
   );
@@ -97,13 +187,12 @@ export function queueSupportReply(
   const explicit = orders.find((o) => mentioned.includes(o.number.replace(/^#/, '').toLowerCase()));
   const contextOrder = active.find((o) => o.id === quoted?.orderId);
   const order = mentioned.length
-    ? mentioned.length === 1 && (!quoted || contextOrder?.id === explicit?.id)
+    ? mentioned.length === 1 && (!quoted || !contextOrder || contextOrder.id === explicit?.id)
       ? explicit
       : undefined
     : (contextOrder ?? (active.length === 1 ? active[0] : undefined));
-  if (!order && intent !== 'delivery') intent = 'clarify';
+  if (!order && !policyIntent) intent = 'clarify';
 
-  if (intent === 'delivery' ? !w.settings.faqs : !w.settings.tracking) return false;
   const conversation = customerConversation(w, from);
   conversation.human = false;
   const messageId = randomUUID();
@@ -111,12 +200,12 @@ export function queueSupportReply(
     id: messageId,
     direction: 'in',
     text: body,
-    createdAt: new Date(received).toISOString(),
+    createdAt: new Date(Math.min(received, now)).toISOString(),
   });
   conversation.unread = true;
   w.jobs.push({
     id: randomUUID(),
-    orderId: (order ?? active[0]!).id,
+    orderId: policyIntent ? order?.id : (order ?? active[0]!).id,
     kind: `${prefix}${intent}:${messageId}:${w.integration.phoneNumberId}`,
     state: 'QUEUED',
     attempts: 0,
@@ -127,14 +216,21 @@ export function queueSupportReply(
 
 export function supportReplyContext(store: Store, job: Job, order: Order | undefined) {
   const [, intent, messageId, sender] = job.kind.split(':');
-  const phone = order?.phone;
-  const conversation = store.workspace.conversations.find((c) => c.phone === phone && !c.orderId);
+  const policyIntent = isPolicyIntent(intent);
+  const conversation =
+    store.workspace.conversations.find(
+      (c) => !c.orderId && c.messages.some((m) => m.id === messageId && m.direction === 'in'),
+    ) ??
+    (order
+      ? store.workspace.conversations.find((c) => c.phone === order.phone && !c.orderId)
+      : undefined);
+  const phone = conversation?.phone ?? order?.phone ?? '';
   const inbound = conversation?.messages.find((m) => m.id === messageId && m.direction === 'in');
   if (
     sender !== store.workspace.integration.phoneNumberId ||
-    (intent === 'delivery' ? !store.workspace.settings.faqs : !store.workspace.settings.tracking) ||
-    !order ||
-    order.archivedAt ||
+    (policyIntent ? !store.workspace.settings.faqs : !store.workspace.settings.tracking) ||
+    (!policyIntent && (!order || order.archivedAt)) ||
+    (policyIntent && order?.archivedAt) ||
     !phone ||
     !inbound ||
     !canReply(store, phone) ||
@@ -146,6 +242,19 @@ export function supportReplyContext(store: Store, job: Job, order: Order | undef
     );
   return { intent, phone, conversationId: conversation!.id };
 }
+
+const policiesResult = z.object({
+  shop: z.object({
+    shopPolicies: z.array(
+      z.object({
+        type: z.string(),
+        title: z.string().nullish(),
+        url: z.string().nullish(),
+        body: z.string().nullish(),
+      }),
+    ),
+  }),
+});
 
 const orderResult = z.object({
   order: z
@@ -164,27 +273,77 @@ const orderResult = z.object({
     .nullable(),
 });
 
+async function fetchShopPolicies(store: Store) {
+  if (!store.workspace.integration.shopifyToken || !store.workspace.integration.shopDomain)
+    return [];
+  const integration = await freshShopifyIntegration(store.merchant.id);
+  const result = policiesResult.parse(
+    await shopifyGraphql(integration, '{shop{shopPolicies{type title url body}}}'),
+  );
+  return result.shop.shopPolicies;
+}
+
 export async function supportReplyText(
-  merchantId: string,
-  order: Order,
+  store: Store,
   intent?: string,
+  order?: Order,
 ): Promise<string> {
   if (intent === 'clarify')
     return 'Which order can we help with? Please reply with the order number from your confirmation.';
-  const integration = await freshShopifyIntegration(merchantId);
-  if (intent === 'delivery') {
-    const result = z
-      .object({
-        shop: z.object({
-          shopPolicies: z.array(z.object({ type: z.string(), url: z.string().url() })),
-        }),
-      })
-      .parse(await shopifyGraphql(integration, '{shop{shopPolicies{type url}}}'));
-    const url = result.shop.shopPolicies.find((policy) => policy.type === 'SHIPPING_POLICY')?.url;
-    if (!url || !url.startsWith('https://'))
-      throw new ProviderError('No published Shopify shipping policy is available for this reply');
-    return `For delivery estimates, please see our shipping policy: ${url}`;
+
+  if (isPolicyIntent(intent)) {
+    const policies = await fetchShopPolicies(store);
+    const storePolicy = store.workspace.settings.policy.trim();
+
+    if (intent === 'delivery') {
+      const shipping = policies.find((p) => p.type === 'SHIPPING_POLICY');
+      const summary = policySummary(shipping?.body, 550);
+      const link = shipping?.url?.startsWith('https://') ? shipping.url : '';
+      if (summary && link) return `Shipping policy:\n${summary}\n\nFull details: ${link}`;
+      if (link) return `For delivery estimates, please see our shipping policy: ${link}`;
+      if (summary) return `Shipping policy:\n${summary}`;
+      if (storePolicy) return storePolicy;
+      throw new ProviderError(
+        'No published Shopify shipping policy or saved store policy is available for this reply',
+      );
+    }
+
+    if (intent === 'refund_policy') {
+      const refund = policies.find((p) => p.type === 'REFUND_POLICY');
+      const summary = policySummary(refund?.body, 550);
+      const link = refund?.url?.startsWith('https://') ? refund.url : '';
+      if (summary && link) return `Return & refund policy:\n${summary}\n\nFull details: ${link}`;
+      if (link) return `For returns and refunds, please see our policy: ${link}`;
+      if (summary) return `Return & refund policy:\n${summary}`;
+      if (storePolicy) return storePolicy;
+      throw new ProviderError(
+        'No published Shopify refund policy or saved store policy is available for this reply',
+      );
+    }
+
+    const lines: string[] = [];
+    for (const p of policies) {
+      const label = shopPolicyLabels[p.type] ?? p.title?.trim() ?? p.type.replaceAll('_', ' ');
+      const link = p.url?.startsWith('https://') ? p.url : '';
+      const summary = policySummary(p.body, 260);
+      if (link) lines.push(`- ${label}: ${link}`);
+      else if (summary) lines.push(`- ${label}: ${summary}`);
+    }
+    if (lines.length) {
+      const parts = ['Here are our store policies:', lines.join('\n')];
+      if (storePolicy) parts.push(storePolicy);
+      parts.push('Reply with "shipping policy" or "return policy" for specific details.');
+      return parts.join('\n\n').slice(0, 3500);
+    }
+    if (storePolicy) return storePolicy.slice(0, 3500);
+    throw new ProviderError(
+      'No published Shopify policies or saved store policy are available for this reply',
+    );
   }
+
+  if (!order)
+    throw new ProviderError('An associated order is required for status and tracking replies');
+  const integration = await freshShopifyIntegration(store.merchant.id);
   const { order: current } = orderResult.parse(
     await shopifyGraphql(
       integration,

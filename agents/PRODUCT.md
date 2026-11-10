@@ -33,16 +33,16 @@ No phone means no WhatsApp send; record an actionable reason. Do not infer a Wha
 
 ## Current boundaries and next stages
 
-Implemented areas include tenant persistence, authentication, Shopify OAuth/intake/catch-up, message attempts, incoming Meta processing, guarded order actions, review, and bulk/archive operations. Verify individual capabilities in code/tests before making claims.
+Implemented areas include tenant persistence, authentication, Shopify OAuth/intake/catch-up, message attempts, incoming Meta processing, guarded order actions, rule-based read-only WhatsApp support/policy auto-replies, manual live Inbox replies within Meta's 24-hour customer service window, review, and bulk/archive operations. Verify individual capabilities in code/tests before making claims.
 
-Public SaaS work remains: production consent/onboarding, account recovery and email verification, team roles, billing, privacy lifecycle and Shopify distribution requirements, backup/recovery validation, and production worker deployment. Human live replies, courier integrations, refunds, and address edits must not be advertised as automated unless implemented and verified.
+Public SaaS work remains: production consent/onboarding, account recovery and email verification, team roles, billing, privacy lifecycle and Shopify distribution requirements, backup/recovery validation, and production worker deployment. Courier integrations, automatic refunds, and automated address edits must not be advertised as automated unless implemented and verified.
 
 Older README and operational paragraphs contain historical limits; the current implementation and regression tests must be checked when those descriptions conflict. Do not copy live identifiers, secrets, or temporary tunnel addresses into specifications.
 
-Inbox groups order threads and general replies by customer phone inside each merchant workspace. Order labels preserve message context; ambiguous free-text replies never select an order or trigger Shopify actions. General live replies remain unavailable.
+Inbox groups order threads and general replies by customer phone inside each merchant workspace. Order labels preserve message context; ambiguous free-text replies never select an order or trigger Shopify actions. Manual live Inbox replies pause automated replies (`human = true`) and send free-form text via the merchant's verified WhatsApp sender only within 24 hours of the customer's latest inbound message.
 
-## Planned WhatsApp support replies
+## Rule-based WhatsApp support replies
 
-Use rules and merchant-editable reply text first. Automate read-only order status and tracking. Verify incoming Meta events and match the merchant, sender, customer, and Relay conversation before replying. Prefer a direct reply to a Relay message or an explicit order number verified against the customer. Ask for the order number if several orders could match. Keep unrelated chats silent and hand off unclear requests or order changes to staff.
+Use rules, Shopify order/legal-policy data, and merchant-editable reply text (`settings.policy`). Automate read-only order status, tracking, shipping/delivery policies, and store/refund policy questions (`settings.tracking` and `settings.faqs`). Verify incoming Meta events and match the merchant, sender, customer, and Relay conversation before replying. Prefer a direct reply to a Relay message or an explicit order number verified against the customer. Ask for the order number if several orders could match. Keep unrelated chats silent and hand off action requests (cancellations, returns, refunds, address edits) or unclear requests to staff.
 
-Read current order facts from Shopify and send through the merchant's WhatsApp sender. Use free-form replies only within 24 hours of the customer's latest message. Skip automated follow-ups outside that window in the initial release. Record replies and delivery outcomes in the Inbox. Proposed billing: Relay adds no per-reply fee for these service replies. Provider charges for other message types are separate.
+Read current order facts and published legal policies from Shopify (`read_legal_policies`) and send through the merchant's WhatsApp sender. Use free-form replies only within 24 hours of the customer's latest message. Skip automated follow-ups outside that window. Record replies and delivery outcomes in Inbox and Messages. Relay adds no per-reply fee for these service replies; Meta provider charges and rules apply.

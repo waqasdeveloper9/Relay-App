@@ -90,6 +90,21 @@ export const metaPayload = z.object({
   ),
 });
 
+function needsHumanEscalation(text?: string, button?: string): boolean {
+  if (button || !text?.trim()) return true;
+  const normalized = text.trim().toLowerCase();
+  const policyOnly =
+    /\bpolic(?:y|ies)\b/.test(normalized) &&
+    !/\b(cancel|refund|return|exchange|change|edit|wrong|replace|damag\w*|broken|missing|human|agent|staff|complaint)\s+(my|the|this|order|item|parcel|address)\b/.test(
+      normalized,
+    ) &&
+    !/\b(want|need|like)\s+to\s+(cancel|refund|return|exchange|change|replace)\b/.test(normalized);
+  if (policyOnly) return false;
+  return /\b(cancel|refund|return|exchange|change|edit|wrong|replace|damag\w*|broken|missing|human|agent|staff|representative|complaint|confirm)\b/.test(
+    normalized,
+  );
+}
+
 export async function processMetaEvent(merchantId: string, raw: unknown): Promise<void> {
   const payload = metaPayload.parse(raw);
   await mutate(merchantId, (s) => {
@@ -251,7 +266,10 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
             const c = customerConversation(w, message.from);
             append(c, 'in', message.text?.body ?? message.button?.text ?? '[Unsupported message]');
             c.unread = true;
-            activity(w, 'Customer message received in Inbox without an order association.');
+            if (needsHumanEscalation(message.text?.body, button)) {
+              c.human = true;
+              activity(w, 'Customer message received in Inbox for human review.');
+            } else activity(w, 'Customer message received in Inbox without an order association.');
             w.processedEvents.push(eventKey);
             return;
           }
@@ -259,15 +277,17 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
             const c = conversation(w, order);
             append(c, 'in', message.text?.body ?? message.button?.text ?? '[Unsupported message]');
             c.unread = true;
-            c.human = true;
-            notify(
-              w,
-              'reply:' + order.id,
-              'Customer message requires review',
-              'A reply was received without a verified order-action button.',
-              'Review it in Inbox; no Shopify action was executed.',
-              'warning',
-            );
+            if (needsHumanEscalation(message.text?.body, button)) {
+              c.human = true;
+              notify(
+                w,
+                'reply:' + order.id,
+                'Customer message requires review',
+                'A reply was received without a verified order-action button.',
+                'Review it in Inbox; no Shopify action was executed.',
+                'warning',
+              );
+            }
             w.processedEvents.push(eventKey);
             return;
           }

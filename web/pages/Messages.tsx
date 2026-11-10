@@ -20,7 +20,16 @@ export function Messages({
     .filter(
       (m) =>
         (filter === 'ALL' || m.status === filter) &&
-        ([m.recipient, m.templateName, w.orders.find((o) => o.id === m.orderId)?.number ?? 'Sample']
+        ([
+          m.recipient,
+          m.templateName,
+          w.orders.find((o) => o.id === m.orderId)?.number ??
+            (m.kind === 'INBOX_REPLY'
+              ? 'Inbox reply'
+              : m.kind === 'SUPPORT_REPLY'
+                ? 'Support reply'
+                : 'Sample'),
+        ]
           .join(' ')
           .toLowerCase()
           .includes(search.trim().toLowerCase()) ||
@@ -85,14 +94,22 @@ export function Messages({
                     {w.orders.find((o) => o.id === m.orderId)?.number ??
                       (m.orderId
                         ? 'Removed order'
-                        : m.kind === 'SUPPORT_REPLY'
-                          ? 'Support reply'
-                          : 'Sample test')}
+                        : m.kind === 'INBOX_REPLY'
+                          ? 'Inbox reply'
+                          : m.kind === 'SUPPORT_REPLY'
+                            ? 'Support reply'
+                            : 'Sample test')}
                   </td>
                   <td>+{m.recipient}</td>
                   <td>
-                    {m.templateName}
-                    <small className="muted"> / {m.languageCode}</small>
+                    {m.templateName ? (
+                      <>
+                        {m.templateName}
+                        <small className="muted"> / {m.languageCode}</small>
+                      </>
+                    ) : (
+                      <span className="muted">Free-form text</span>
+                    )}
                   </td>
                   <td>
                     <span className={'message-status ' + m.status.toLowerCase()}>

@@ -804,9 +804,9 @@ function App() {
             ))}
           </div>
           <div className="notice">
-            Live automatic replies, courier synchronization, and automatic change execution are not
-            enabled in this release. Connected inbound messages produce suggested replies for human
-            review.
+            Connected workspaces support live manual replies within Meta’s 24-hour customer reply
+            window and rule-based order-tracking or policy replies. Courier synchronization and
+            automatic Shopify order edits or refunds are not enabled in this release.
           </div>
         </Modal>
       )}

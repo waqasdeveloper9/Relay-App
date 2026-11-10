@@ -50,7 +50,7 @@ async function session() {
   assert.equal(response.status, 200);
   const cookie = response.headers.get('set-cookie')!.split(';')[0]!;
   const snapshot = (await (await request('/workspace', undefined, cookie)).json()) as {
-    merchant: { id: string };
+    merchant: { id: string; subscriptionStatus: string; createdAt: string; trialEndsAt: string };
     workspace: Workspace;
   };
   return { cookie, ...snapshot };
@@ -159,7 +159,22 @@ test('registration, login, cookie protection and logout work', async () => {
   const cookie = response.headers.get('set-cookie')!.split(';')[0]!;
   const snapshot = await (await request('/workspace', undefined, cookie)).json();
   assert.ok(!('passwordHash' in snapshot.merchant));
+  assert.equal(snapshot.merchant.subscriptionStatus, 'TRIALING');
+  assert.ok(
+    Math.abs(
+      Date.parse(snapshot.merchant.trialEndsAt) -
+        Date.parse(snapshot.merchant.createdAt) -
+        30 * 86_400_000,
+    ) < 5_000,
+  );
   assert.equal(snapshot.workspace.orders.length, 0);
+  const demo = await session();
+  assert.equal(demo.merchant.subscriptionStatus, 'TRIALING');
+  assert.ok(
+    Math.abs(
+      Date.parse(demo.merchant.trialEndsAt) - Date.parse(demo.merchant.createdAt) - 30 * 86_400_000,
+    ) < 5_000,
+  );
   assert.equal(
     (await request('/auth/register', { email, password, brandName: 'Duplicate' })).status,
     409,

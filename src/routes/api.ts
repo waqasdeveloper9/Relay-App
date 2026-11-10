@@ -12,6 +12,9 @@ import { canSend } from '../services/automation.js';
 import { tick } from '../services/worker.js';
 import * as shopifyOAuth from '../controllers/shopify-oauth.js';
 
+export const TRIAL_DAYS = 30;
+const DAY_MS = 86_400_000;
+
 export const api = Router();
 api.get('/health', (req, res) => {
   res.json({
@@ -41,14 +44,15 @@ const credentials = z.object({
 });
 api.post('/auth/register', authLimit, async (req, res) => {
   const input = credentials.extend({ brandName: z.string().trim().min(2).max(80) }).parse(req.body);
+  const now = Date.now();
   const merchant = {
     id: randomUUID(),
     email: input.email,
     passwordHash: await hash(input.password, 12),
     brandName: input.brandName,
     subscriptionStatus: 'TRIALING' as const,
-    createdAt: new Date().toISOString(),
-    trialEndsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+    createdAt: new Date(now).toISOString(),
+    trialEndsAt: new Date(now + TRIAL_DAYS * DAY_MS).toISOString(),
   };
   await createStore({ merchant, workspace: emptyWorkspace() });
   setSession(res, await issueToken(merchant.id), req);
@@ -74,6 +78,7 @@ api.post('/auth/demo', authLimit, async (_req, res) => {
     return;
   }
   const id = randomUUID();
+  const now = Date.now();
   await createStore({
     merchant: {
       id,
@@ -81,8 +86,8 @@ api.post('/auth/demo', authLimit, async (_req, res) => {
       passwordHash: '',
       brandName: 'The Everyday Store',
       subscriptionStatus: 'TRIALING',
-      createdAt: new Date().toISOString(),
-      trialEndsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+      createdAt: new Date(now).toISOString(),
+      trialEndsAt: new Date(now + TRIAL_DAYS * DAY_MS).toISOString(),
     },
     workspace: demoWorkspace(),
   });

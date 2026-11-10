@@ -83,7 +83,7 @@ export function Auth({ onSuccess }: { onSuccess: () => Promise<void> }) {
           <h2>{register ? 'Create your workspace' : 'Welcome back.'}</h2>
           <p>
             {register
-              ? 'Start with a 7-day trial. No payment setup required.'
+              ? 'Start with a 30-day trial. No payment setup required.'
               : 'Sign in to your merchant workspace.'}
           </p>
           {workspaceUrl && (

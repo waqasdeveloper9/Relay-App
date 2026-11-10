@@ -6,7 +6,7 @@ Read this file before changing this repository. These instructions apply through
 
 Relay is a merchant operations SaaS connecting Shopify stores with their own official Meta WhatsApp senders. Its initial focus is reliable Cash on Delivery order confirmation, customer decisions, message history, recovery, and merchant review. One shared application serves isolated merchant workspaces. A merchant's customers receive messages from that merchant's configured sender.
 
-The current product is a development/client pilot, not a completed public SaaS release. Preserve the distinction between implemented behavior, sandbox authorization, and production readiness. Registration assigns a seven-day trial; billing and complete self-service onboarding remain future work.
+The current product is a development/client pilot, not a completed public SaaS release. Preserve the distinction between implemented behavior, sandbox authorization, and production readiness. Registration assigns a 30-day trial; billing and complete self-service onboarding remain future work.
 
 ## Required reading
 

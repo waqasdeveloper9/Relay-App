@@ -22,7 +22,7 @@ Demo accounts and data live in server memory. Restarting the API clears them and
 
 - Responsive React operations dashboard: overview, searchable/paginated orders, inbox, automations, integration setup, reports, and settings.
 - Merchant registration and sign-in, bcrypt password hashes, expiring JWTs in HTTP-only SameSite cookies, origin checking, request validation, and rate limiting.
-- Seven-day trial assignment and outbound eligibility checks. Trial expiry does not prevent viewing or recording incoming messages.
+- Thirty-day trial assignment and outbound eligibility checks. Trial expiry does not prevent viewing or recording incoming messages.
 - Encrypted integration credentials using AES-256-GCM; credential values never appear in workspace API responses.
 - Merchant-bound Shopify OAuth, one-time browser state, signed callbacks, encrypted offline token refresh, and explicit idempotent webhook registration.
 - Signed Shopify COD order intake, app-uninstall token removal, and webhook deduplication.

@@ -42,10 +42,10 @@ export function Automations({
     {
       key: 'tracking' as const,
       icon: Package,
-      title: 'Order tracking assistance',
-      desc: 'Answer tracking questions with the available order status.',
-      trigger: 'Customer asks about a parcel',
-      action: 'Look up order information',
+      title: 'Order tracking & Help menu',
+      desc: 'Answer status/tracking questions by customer phone and offer an interactive Help menu.',
+      trigger: 'Greeting or parcel question',
+      action: 'Send Help menu or Shopify status',
       color: 'green',
     },
     {

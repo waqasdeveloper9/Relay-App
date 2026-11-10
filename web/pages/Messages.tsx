@@ -26,9 +26,11 @@ export function Messages({
           w.orders.find((o) => o.id === m.orderId)?.number ??
             (m.kind === 'INBOX_REPLY'
               ? 'Inbox reply'
-              : m.kind === 'SUPPORT_REPLY'
-                ? 'Support reply'
-                : 'Sample'),
+              : m.kind === 'SUPPORT_MENU'
+                ? 'Support menu'
+                : m.kind === 'SUPPORT_REPLY'
+                  ? 'Support reply'
+                  : 'Sample'),
         ]
           .join(' ')
           .toLowerCase()
@@ -96,9 +98,11 @@ export function Messages({
                         ? 'Removed order'
                         : m.kind === 'INBOX_REPLY'
                           ? 'Inbox reply'
-                          : m.kind === 'SUPPORT_REPLY'
-                            ? 'Support reply'
-                            : 'Sample test')}
+                          : m.kind === 'SUPPORT_MENU'
+                            ? 'Support menu'
+                            : m.kind === 'SUPPORT_REPLY'
+                              ? 'Support reply'
+                              : 'Sample test')}
                   </td>
                   <td>+{m.recipient}</td>
                   <td>
@@ -108,7 +112,9 @@ export function Messages({
                         <small className="muted"> / {m.languageCode}</small>
                       </>
                     ) : (
-                      <span className="muted">Free-form text</span>
+                      <span className="muted">
+                        {m.kind === 'SUPPORT_MENU' ? 'Interactive menu' : 'Free-form text'}
+                      </span>
                     )}
                   </td>
                   <td>

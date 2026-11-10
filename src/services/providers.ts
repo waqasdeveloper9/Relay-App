@@ -216,6 +216,11 @@ export async function syncCancellationTags(
   }
 }
 
+export interface SupportMenuButton {
+  id: 'MENU:STATUS' | 'MENU:POLICY' | 'MENU:HUMAN';
+  title: string;
+}
+
 export async function sendSupportText(
   integration: Integration,
   recipient: string,
@@ -243,6 +248,57 @@ export async function sendSupportText(
           biz_opaque_callback_data: correlationId,
           type: 'text',
           text: { body },
+        }),
+      },
+      true,
+    ),
+  );
+}
+
+export async function sendSupportInteractiveMenu(
+  integration: Integration,
+  recipient: string,
+  body: string,
+  buttons: SupportMenuButton[],
+  correlationId: string,
+  footer?: string,
+): Promise<string> {
+  if (
+    !/^\d+$/.test(integration.phoneNumberId) ||
+    !integration.whatsappToken ||
+    !integration.whatsappVerifiedAt
+  )
+    throw new ProviderError('Save and verify the WhatsApp connection first');
+  if (!buttons.length || buttons.length > 3)
+    throw new ProviderError('Interactive menu must contain between 1 and 3 reply buttons');
+  const bodyText = body.trim().slice(0, 1024);
+  const footerText = footer?.trim().slice(0, 60);
+  return metaMessageId(
+    await request(
+      `https://graph.facebook.com/${config.metaVersion}/${integration.phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${decrypt(integration.whatsappToken)}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: recipient,
+          biz_opaque_callback_data: correlationId,
+          type: 'interactive',
+          interactive: {
+            type: 'button',
+            body: { text: bodyText },
+            ...(footerText ? { footer: { text: footerText } } : {}),
+            action: {
+              buttons: buttons.map((b) => ({
+                type: 'reply',
+                reply: { id: b.id, title: b.title.trim().slice(0, 20) },
+              })),
+            },
+          },
         }),
       },
       true,

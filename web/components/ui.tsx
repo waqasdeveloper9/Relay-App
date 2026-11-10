@@ -292,7 +292,8 @@ export function OrderTable({
                   {(() => {
                     const m = messages.find(
                       (m) =>
-                        m.orderId === o.id && !['SUPPORT_REPLY', 'INBOX_REPLY'].includes(m.kind),
+                        m.orderId === o.id &&
+                        !['SUPPORT_REPLY', 'SUPPORT_MENU', 'INBOX_REPLY'].includes(m.kind),
                     );
                     return (
                       <>

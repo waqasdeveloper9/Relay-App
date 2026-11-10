@@ -90,7 +90,11 @@ export function applyDeliveryStatus(
       job.messageId = event.id;
       job.error = undefined;
       const order = w.orders.find((o) => o.id === job.orderId);
-      if (order && m.kind !== 'SUPPORT_REPLY' && !order.confirmationExpiresAt)
+      if (
+        order &&
+        !['SUPPORT_REPLY', 'SUPPORT_MENU'].includes(m.kind) &&
+        !order.confirmationExpiresAt
+      )
         order.confirmationExpiresAt = new Date(
           Date.parse(m.createdAt) + reliability(w).maxMessageAgeHours * 3600000,
         ).toISOString();

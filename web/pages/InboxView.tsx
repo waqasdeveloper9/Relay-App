@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, CheckCheck, Send, Users, Zap } from 'lucide-react';
 import { customerConversations } from '../../src/models/customer-conversations';
 import { inboxReplyEligibility } from '../../src/models/inbox-eligibility';
@@ -6,14 +6,38 @@ import { api, type Snapshot } from '../api';
 import { initials, time, type Act } from '../lib/format';
 import { Empty } from '../components/ui';
 
+const quickReplies = [
+  {
+    label: 'Order confirmed',
+    body: 'Thank you! Your Cash on Delivery order is confirmed and being prepared for dispatch.',
+  },
+  {
+    label: 'Ask order #',
+    body: 'Could you please share your order number (for example, #1001) so we can check this for you?',
+  },
+  {
+    label: 'Order dispatched',
+    body: 'Your order has been dispatched and is on its way. Reply here anytime if you need help.',
+  },
+  {
+    label: 'Delivery timing',
+    body: 'Standard Cash on Delivery delivery takes 2–4 working days depending on your city.',
+  },
+] as const;
+
 export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; act: Act }) {
   const w = data.workspace;
   const threads = useMemo(() => customerConversations(w), [w]);
   const [id, setId] = useState(threads[0]?.phone || threads[0]?.id);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const messagesRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const readAttempts = useRef(new Set<string>());
   const [simulate, setSimulate] = useState(false);
+  const [activeChip, setActiveChip] = useState(0);
+  const supportsFocusGroup =
+    typeof HTMLElement !== 'undefined' && 'focusGroup' in HTMLElement.prototype;
   const inputId = useId();
   const hintId = useId();
   const c = threads.find((c) => (c.phone || c.id) === id) ?? threads[0];
@@ -71,7 +95,7 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
     const match = (w.outboundMessages ?? []).find(
       (o) =>
         o.recipient === c!.phone &&
-        ['INBOX_REPLY', 'SUPPORT_REPLY'].includes(o.kind) &&
+        ['INBOX_REPLY', 'SUPPORT_REPLY', 'SUPPORT_MENU'].includes(o.kind) &&
         o.preview === msg.text &&
         Math.abs(Date.parse(o.createdAt) - msgAt) < 120_000,
     );
@@ -225,10 +249,72 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
               </button>
             )}
           </div>
+          {!simulate && (
+            <div
+              ref={toolbarRef}
+              role="toolbar"
+              aria-label="Quick replies"
+              aria-controls={inputId}
+              className="quick-replies"
+              {...({ focusgroup: 'toolbar wrap' } as Record<string, string>)}
+              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                if (supportsFocusGroup) return;
+                const bar = toolbarRef.current;
+                if (!bar) return;
+                const buttons = [...bar.querySelectorAll<HTMLButtonElement>('button')];
+                if (!buttons.length) return;
+                const rtl = getComputedStyle(bar).direction === 'rtl';
+                const step =
+                  e.key === 'ArrowRight'
+                    ? rtl
+                      ? -1
+                      : 1
+                    : e.key === 'ArrowLeft'
+                      ? rtl
+                        ? 1
+                        : -1
+                      : e.key === 'Home'
+                        ? -buttons.length
+                        : e.key === 'End'
+                          ? buttons.length
+                          : 0;
+                if (!step) return;
+                e.preventDefault();
+                const current = Math.max(0, buttons.indexOf(e.target as HTMLButtonElement));
+                const next =
+                  e.key === 'Home'
+                    ? 0
+                    : e.key === 'End'
+                      ? buttons.length - 1
+                      : (current + step + buttons.length) % buttons.length;
+                setActiveChip(next);
+                buttons[next]?.focus();
+              }}
+            >
+              {quickReplies.map((q, index) => (
+                <button
+                  key={q.label}
+                  type="button"
+                  className="quick-reply-chip"
+                  tabIndex={supportsFocusGroup ? undefined : index === activeChip ? 0 : -1}
+                  aria-disabled={!canCompose || busy ? 'true' : undefined}
+                  onFocus={() => setActiveChip(index)}
+                  onClick={() => {
+                    if (!canCompose || busy) return;
+                    setText(q.body);
+                    textareaRef.current?.focus();
+                  }}
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          )}
           <label htmlFor={inputId} className="sr-only">
             {simulate ? 'Simulate incoming customer message' : 'Message text'}
           </label>
           <textarea
+            ref={textareaRef}
             id={inputId}
             name="message"
             aria-describedby={hintId}

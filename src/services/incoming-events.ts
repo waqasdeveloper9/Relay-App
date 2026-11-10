@@ -1,4 +1,5 @@
-import { queueSupportReply } from './support-replies.js';
+import { humanHandling, queueSupportHandoff, queueSupportReply } from './support-replies.js';
+import { customerThreads } from '../models/customer-conversations.js';
 import { customerConversation } from './automation.js';
 import { z } from 'zod';
 import { getStore, mutate } from './repository.js';
@@ -202,6 +203,11 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
           const eventKey = `meta:${message.id}`;
           if (w.processedEvents.includes(eventKey)) return;
           const button = message.button?.payload ?? message.interactive?.button_reply?.id;
+          const incomingText =
+            message.text?.body ??
+            message.interactive?.button_reply?.title ??
+            message.button?.text ??
+            '[Unsupported message]';
           if (button?.startsWith('ORDER:')) {
             const decision = parseOrderButton(button);
             const order = decision
@@ -237,6 +243,73 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
             w.processedEvents.push(eventKey);
             return;
           }
+          if (button === 'MENU:HUMAN') {
+            const wasHuman = humanHandling(w, message.from);
+            if (
+              queueSupportHandoff(s, {
+                from: message.from,
+                body: incomingText,
+                timestamp: message.timestamp,
+              })
+            ) {
+              w.processedEvents.push(eventKey);
+              return;
+            }
+            const c = customerConversation(w, message.from);
+            append(c, 'in', incomingText);
+            for (const thread of customerThreads(w, c)) {
+              thread.human = true;
+              thread.unread = true;
+            }
+            if (!wasHuman) {
+              append(
+                c,
+                'note',
+                'Customer tapped Talk to support. Assistant paused for human handling.',
+              );
+              notify(
+                w,
+                'reply:' + c.id,
+                'Customer requested support',
+                'A customer tapped Talk to support on WhatsApp.',
+                'Reply in Inbox to assist them.',
+                'info',
+              );
+              activity(w, 'Customer requested human support from WhatsApp menu.');
+            }
+            w.processedEvents.push(eventKey);
+            return;
+          }
+          if (button === 'MENU:STATUS' || button === 'MENU:POLICY') {
+            if (
+              queueSupportReply(s, {
+                from: message.from,
+                body: incomingText,
+                timestamp: message.timestamp,
+                quotedId: message.context?.id,
+                forcedIntent: button === 'MENU:STATUS' ? 'status' : 'policy',
+                isButton: true,
+              })
+            ) {
+              w.processedEvents.push(eventKey);
+              return;
+            }
+            const wasHuman = humanHandling(w, message.from);
+            const c = customerConversation(w, message.from);
+            append(c, 'in', incomingText);
+            c.unread = true;
+            if (!wasHuman) {
+              for (const thread of customerThreads(w, c)) thread.human = true;
+              append(
+                c,
+                'note',
+                'Menu selection received while automation could not reply. Assigned to human review.',
+              );
+              activity(w, 'Customer menu selection requires human reply in Inbox.');
+            }
+            w.processedEvents.push(eventKey);
+            return;
+          }
           if (
             !button &&
             message.text &&
@@ -264,7 +337,7 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
                 : undefined;
           if (!order) {
             const c = customerConversation(w, message.from);
-            append(c, 'in', message.text?.body ?? message.button?.text ?? '[Unsupported message]');
+            append(c, 'in', incomingText);
             c.unread = true;
             if (needsHumanEscalation(message.text?.body, button)) {
               c.human = true;
@@ -275,7 +348,7 @@ export async function processMetaEvent(merchantId: string, raw: unknown): Promis
           }
           if (!config.demo) {
             const c = conversation(w, order);
-            append(c, 'in', message.text?.body ?? message.button?.text ?? '[Unsupported message]');
+            append(c, 'in', incomingText);
             c.unread = true;
             if (needsHumanEscalation(message.text?.body, button)) {
               c.human = true;

@@ -1,5 +1,11 @@
 import { config } from '../config.js';
-import { isSupportReply, supportReplyContext, supportReplyText } from './support-replies.js';
+import {
+  isMenuIntent,
+  isSupportReply,
+  menuPromptDetails,
+  supportReplyContext,
+  supportReplyText,
+} from './support-replies.js';
 import { readyStores, mutate, getStore } from './repository.js';
 import { activity, append, canSend, conversation, enqueue } from './automation.js';
 import {
@@ -7,6 +13,7 @@ import {
   syncCancellationTags,
   ProviderError,
   sendHelloWorldTest,
+  sendSupportInteractiveMenu,
   sendSupportText,
 } from './providers.js';
 import { orderTestAllowed } from './order-test.js';
@@ -89,9 +96,55 @@ export async function tick(): Promise<void> {
       try {
         if (isSupportReply(candidate.kind)) {
           const context = supportReplyContext(claimed, candidate, order);
-          const reply = await supportReplyText(claimed, context.intent, order);
+          if (isMenuIntent(context.intent)) {
+            const menu = menuPromptDetails(claimed.merchant.brandName, claimed.workspace.settings);
+            historyId = await beginMessage(id, {
+              orderId: undefined,
+              jobId: candidate.id,
+              kind: 'SUPPORT_MENU',
+              recipient: context.phone,
+              templateName: '',
+              languageCode: '',
+              preview: menu.preview,
+            });
+            const current = (await getStore(id))!;
+            supportReplyContext(
+              current,
+              candidate,
+              current.workspace.orders.find((o) => o.id === candidate.orderId),
+            );
+            const messageId = await sendSupportInteractiveMenu(
+              current.workspace.integration,
+              context.phone,
+              menu.body,
+              menu.buttons,
+              historyId,
+              menu.footer,
+            );
+            await updateMessage(id, historyId, { status: 'ACCEPTED', messageId });
+            await mutate(id, (s) => {
+              const job = s.workspace.jobs.find((j) => j.id === candidate.id)!;
+              Object.assign(job, {
+                state: 'DONE',
+                messageId,
+                claimedAt: undefined,
+                error: undefined,
+                retryable: false,
+              });
+              const thread = s.workspace.conversations.find((c) => c.id === context.conversationId);
+              if (thread) append(thread, 'out', menu.preview);
+              resolveNotification(s.workspace, 'job:' + job.id);
+            });
+            continue;
+          }
+          const reply = await supportReplyText(claimed, context.intent, order, context.phone);
           historyId = await beginMessage(id, {
-            orderId: context.intent === 'clarify' ? undefined : order?.id,
+            orderId:
+              context.intent === 'clarify' ||
+              context.intent === 'no_order' ||
+              context.intent === 'handoff'
+                ? undefined
+                : order?.id,
             jobId: candidate.id,
             kind: 'SUPPORT_REPLY',
             recipient: context.phone,

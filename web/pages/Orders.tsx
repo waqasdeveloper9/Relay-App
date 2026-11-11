@@ -2,17 +2,12 @@ import { useEffect, useId, useRef, useState } from 'react';
 import {
   BookmarkPlus,
   Check,
-  CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Clock3,
-  CreditCard,
-  Flag,
-  Lock,
   RefreshCw,
   Search,
   Trash2,
-  Unlock,
   X,
 } from 'lucide-react';
 import type { Order, OrderView } from '../../src/models/types';
@@ -147,6 +142,28 @@ export function Orders({
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const baseId = useId();
   const viewNameId = useId();
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
+        setActionsOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [actionsOpen]);
 
   useEffect(() => {
     let active = true;
@@ -576,10 +593,10 @@ export function Orders({
         </div>
         <div role="tabpanel" aria-labelledby={activeTabButtonId}>
           <div className="order-bulk-toolbar">
-            <strong>
-              {selected.size ? selected.size + ' selected across pages' : 'Select orders'}
-            </strong>
-            <div className="integration-quick-actions">
+            <div className="order-bulk-left">
+              <strong>
+                {selected.size ? selected.size + ' selected across pages' : 'Select orders'}
+              </strong>
               {filtered.length > 0 && filtered.length <= 500 && (
                 <button
                   type="button"
@@ -595,83 +612,123 @@ export function Orders({
                   type="button"
                   className="text-button"
                   disabled={busy}
-                  onClick={() => setSelected(new Set())}
+                  onClick={() => {
+                    setSelected(new Set());
+                    setActionsOpen(false);
+                  }}
                 >
                   Clear selection
                 </button>
               )}
+            </div>
+            <div className="order-bulk-actions">
               <button
                 type="button"
-                className="button secondary"
+                className="button primary"
                 disabled={busy || !selected.size}
-                onClick={() => choose('confirm')}
+                onClick={() => {
+                  setActionsOpen(false);
+                  choose('confirm');
+                }}
               >
                 <Check size={16} />
                 Confirm selected
               </button>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !selected.size}
-                onClick={() => choose('mark_paid')}
-              >
-                <CreditCard size={16} />
-                Mark paid
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !selected.size}
-                onClick={() => choose('mark_in_progress')}
-              >
-                <Clock3 size={16} />
-                In progress
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !selected.size}
-                onClick={() => choose('hold')}
-              >
-                <Lock size={16} />
-                Hold
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !selected.size}
-                onClick={() => choose('release_hold')}
-              >
-                <Unlock size={16} />
-                Release hold
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !selected.size}
-                onClick={() => choose('mark_delivered')}
-              >
-                <CheckCircle2 size={16} />
-                Mark delivered
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !selected.size}
-                onClick={() => choose('review')}
-              >
-                <Flag size={16} />
-                Mark for review
-              </button>
-              <button
-                type="button"
-                className="button danger"
-                disabled={busy || !selected.size}
-                onClick={() => choose('remove')}
-              >
-                <Trash2 size={16} />
-                Remove selected
-              </button>
+              <div className="bulk-dropdown-container" ref={actionsRef}>
+                <button
+                  type="button"
+                  className="button secondary dropdown-toggle"
+                  disabled={busy || !selected.size}
+                  aria-haspopup="menu"
+                  aria-expanded={actionsOpen}
+                  onClick={() => setActionsOpen((v) => !v)}
+                >
+                  Actions
+                  <ChevronDown size={14} />
+                </button>
+                {actionsOpen && selected.size > 0 && (
+                  <div className="bulk-actions-menu" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('mark_paid');
+                      }}
+                    >
+                      Mark paid
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('mark_in_progress');
+                      }}
+                    >
+                      In progress
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('hold');
+                      }}
+                    >
+                      Hold
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('release_hold');
+                      }}
+                    >
+                      Release hold
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('mark_delivered');
+                      }}
+                    >
+                      Mark delivered
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('review');
+                      }}
+                    >
+                      Mark for review
+                    </button>
+                    <div className="bulk-menu-divider" role="separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="bulk-menu-item danger"
+                      onClick={() => {
+                        setActionsOpen(false);
+                        choose('remove');
+                      }}
+                    >
+                      Remove selected
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             <small>
               Up to 500 orders per action. Removal affects Relay only; history is retained.

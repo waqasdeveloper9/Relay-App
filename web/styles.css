@@ -3006,19 +3006,106 @@ tbody tr:hover {
   flex: 1;
   min-width: 230px;
 }
+.topbar-action-button {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
 .order-bulk-toolbar {
-  padding: 18px 24px;
-  background: #faf9ff;
+  padding: 10px 16px;
+  background: #fbfaff;
   border-top: 1px solid #eceaf4;
   border-bottom: 1px solid #eceaf4;
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
+}
+.order-bulk-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.order-bulk-left strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e2433;
+}
+.order-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+.bulk-dropdown-container {
+  position: relative;
+}
+.dropdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.bulk-actions-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 175px;
+  background: #ffffff;
+  border: 1px solid #dedde8;
+  border-radius: 8px;
+  box-shadow:
+    0 10px 25px -5px rgba(24, 21, 48, 0.14),
+    0 4px 10px -2px rgba(24, 21, 48, 0.08);
+  padding: 6px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bulk-menu-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #2e3447;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+  display: flex;
+  align-items: center;
+}
+.bulk-menu-item:hover {
+  background: #f4f2ff;
+  color: #6343d8;
+}
+.bulk-menu-item.danger {
+  color: #c93b48;
+}
+.bulk-menu-item.danger:hover {
+  background: #fff0f2;
+  color: #b32634;
+}
+.bulk-menu-divider {
+  height: 1px;
+  background: #eeecf5;
+  margin: 4px 0;
 }
 .order-bulk-toolbar small {
   flex-basis: 100%;
   color: #758098;
+  font-size: 11px;
 }
 .order-checkbox-cell {
   width: 46px;

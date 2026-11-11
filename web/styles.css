@@ -15,6 +15,8 @@
   --muted: #6d7481;
   --border: #e9ecf2;
   --green: #409b7b;
+  --sidebar-width: 196px;
+  --order-checkbox-width: 38px;
 }
 .shopify-connect-actions {
   display: grid;
@@ -94,7 +96,7 @@ a {
 .sidebar {
   overflow-y: auto;
   overflow-x: hidden;
-  width: 238px;
+  width: var(--sidebar-width, 196px);
   background: #fff;
   border-right: 1px solid var(--border);
   position: fixed;
@@ -102,31 +104,31 @@ a {
   z-index: 30;
   display: flex;
   flex-direction: column;
-  padding: 29px 17px 0;
+  padding: 20px 10px 0;
 }
 .brand-row {
-  padding: 0 12px;
+  padding: 0 6px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 .logo {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   color: #202437;
-  font-size: 29px;
+  font-size: 23px;
   font-weight: 760;
-  letter-spacing: -1.5px;
+  letter-spacing: -1.2px;
 }
 .logo-symbol {
   display: grid;
   place-items: center;
-  width: 31px;
-  height: 33px;
+  width: 27px;
+  height: 29px;
   background: #806bdc;
   color: white;
-  border-radius: 10px;
+  border-radius: 8px;
   transform: rotate(-5deg);
 }
 .logo-symbol svg {
@@ -134,7 +136,7 @@ a {
 }
 .logo-dot {
   color: #7561bc;
-  margin-left: -8px;
+  margin-left: -7px;
 }
 .workspace-label {
   font-size: 8px;
@@ -142,18 +144,18 @@ a {
   color: #6d7077;
   border: 1px solid #e7e9f0;
   border-radius: 4px;
-  padding: 3px 4px;
+  padding: 2px 4px;
 }
 .store-select {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin: 30px 0 29px;
-  padding: 11px 10px;
+  gap: 8px;
+  margin: 18px 0 20px;
+  padding: 8px 8px;
   border: 1px solid var(--border);
   background: #fff;
-  border-radius: 9px;
+  border-radius: 8px;
   text-align: left;
 }
 .store-select > span:nth-child(2) {
@@ -161,7 +163,7 @@ a {
   min-width: 0;
 }
 .store-select strong {
-  font-size: 13px;
+  font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -170,38 +172,39 @@ a {
 .store-select small {
   display: block;
   color: #6d717b;
-  font-size: 12px;
-  margin-top: 4px;
+  font-size: 11px;
+  margin-top: 2px;
 }
 .store-avatar {
-  width: 33px;
-  height: 34px;
+  width: 29px;
+  height: 29px;
   background: #f0f5f0;
   color: #5b7959;
-  border-radius: 7px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
+  flex-shrink: 0;
 }
 .nav-label {
-  font-size: 11px;
+  font-size: 10px;
   color: #6d7077;
-  letter-spacing: 1.3px;
-  margin: 0 13px 12px;
+  letter-spacing: 1.2px;
+  margin: 0 8px 8px;
 }
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   width: 100%;
   border: 0;
   background: none;
-  border-radius: 7px;
-  padding: 12px 13px;
+  border-radius: 6px;
+  padding: 8px 9px;
   text-align: left;
   color: #6d717d;
-  font-size: 14px;
-  margin-bottom: 4px;
-  min-height: 41px;
+  font-size: 13px;
+  margin-bottom: 2px;
+  min-height: 36px;
 }
 .nav-item.active {
   background: #eeeafa;
@@ -220,26 +223,26 @@ a {
   color: #7461b8;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
 }
 .nav-new {
-  font-size: 10px;
+  font-size: 9px;
   background: #f0f2f5;
   color: #6d717d;
   border-radius: 3px;
-  padding: 3px 5px;
+  padding: 2px 4px;
   letter-spacing: 0.4px;
 }
 .sidebar-bottom {
   margin-top: auto;
-  padding-top: 40px;
+  padding-top: 20px;
 }
 .trial-card {
   background: linear-gradient(125deg, #f7f4ff, #faf8ff);
   border: 1px solid #ede7fb;
-  border-radius: 10px;
-  padding: 14px;
-  margin: 0 4px 17px;
+  border-radius: 8px;
+  padding: 12px 10px;
+  margin: 0 2px 14px;
 }
 .trial-icon {
   color: #7665a8;
@@ -273,33 +276,34 @@ a {
   align-items: center;
   gap: 8px;
   border-top: 1px solid var(--border);
-  padding: 17px 0;
-  margin-top: 15px;
+  padding: 12px 0;
+  margin-top: 12px;
 }
 .profile > div {
   flex: 1;
   min-width: 0;
 }
 .profile strong {
-  font-size: 12px;
+  font-size: 11.5px;
   display: block;
 }
 .profile small {
   display: block;
   color: #6e717b;
-  font-size: 11px;
-  margin-top: 5px;
+  font-size: 10px;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .avatar {
-  width: 31px;
-  height: 31px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 .purple {
@@ -319,23 +323,23 @@ a {
   color: #557a69;
 }
 .avatar.tiny {
-  width: 29px;
-  height: 29px;
-  font-size: 11px;
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
 }
 .main-shell {
-  margin-left: 238px;
+  margin-left: var(--sidebar-width, 196px);
   flex: 1;
   min-width: 0;
 }
 .topbar {
-  height: 69px;
+  height: 60px;
   background: #fff;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 35px;
+  padding: 0 18px;
   position: relative;
 }
 .breadcrumb {
@@ -400,9 +404,10 @@ a {
   border-radius: 50%;
 }
 main {
-  max-width: 1510px;
-  margin: 0 auto;
-  padding: 33px 35px 0;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 22px 18px 0;
 }
 .page-heading {
   display: flex;
@@ -827,26 +832,26 @@ th {
   font-size: 11px;
   font-weight: 500;
   color: #6a727f;
-  padding: 11px 16px;
+  padding: 9px 10px;
 }
 th:first-child,
 td:first-child {
-  padding-left: 21px;
+  padding-left: 10px;
 }
 th.order-checkbox-cell,
 td.order-checkbox-cell {
-  width: 46px;
-  min-width: 46px;
-  padding: 11px 12px;
+  width: var(--order-checkbox-width, 38px);
+  min-width: var(--order-checkbox-width, 38px);
+  padding: 9px 6px;
   text-align: center;
 }
 th:last-child,
 td:last-child {
-  padding-right: 18px;
+  padding-right: 10px;
 }
 td,
 tbody th[scope='row'] {
-  padding: 13px 16px;
+  padding: 9px 10px;
   border-bottom: 1px solid #f1f3f6;
   font-size: 12px;
   color: #6a707a;
@@ -863,7 +868,7 @@ thead tr th:first-child {
 }
 thead tr:has(th.order-checkbox-cell) th:nth-child(2) {
   position: sticky;
-  inset-inline-start: 46px;
+  inset-inline-start: var(--order-checkbox-width, 38px);
   z-index: 4;
   background: #fafbfd;
 }
@@ -876,7 +881,7 @@ tbody th[scope='row']:first-child {
 }
 tbody tr:has(.order-checkbox-cell) th[scope='row'] {
   position: sticky;
-  inset-inline-start: 46px;
+  inset-inline-start: var(--order-checkbox-width, 38px);
   z-index: 1;
   background: #fff;
 }
@@ -915,36 +920,40 @@ tbody tr:hover {
 .customer-cell {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 .customer-cell strong {
   font-size: 12px;
   color: #686f7e;
   display: block;
   font-weight: 500;
+  white-space: nowrap;
 }
 .customer-cell small {
   display: block;
   font-size: 10px;
   color: #6e7177;
-  margin-top: 5px;
+  margin-top: 3px;
+  white-space: nowrap;
 }
 .customer-cell .avatar {
-  width: 29px;
-  height: 29px;
-  font-size: 11px;
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
 }
 .amount-cell {
   color: #696f7d;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
 }
 .amount-cell small {
   display: block;
   font-size: 10px;
   color: #6d7178;
-  margin-top: 5px;
+  margin-top: 3px;
   font-weight: 400;
+  white-space: nowrap;
 }
 .badge {
   display: inline-flex;
@@ -952,7 +961,7 @@ tbody tr:hover {
   gap: 5px;
   border-radius: 5px;
   font-size: 11px;
-  padding: 5px 7px;
+  padding: 3px 6px;
   white-space: nowrap;
 }
 .badge > span {
@@ -2208,7 +2217,7 @@ tbody tr:hover {
 }
 @media (min-width: 1500px) {
   main {
-    padding-top: 39px;
+    padding-top: 24px;
   }
   .stats-grid {
     gap: 22px;
@@ -2223,32 +2232,32 @@ tbody tr:hover {
     min-height: 156px;
   }
   .panel-heading {
-    padding: 23px 24px 0;
+    padding: 20px 20px 0;
   }
   td {
-    padding-top: 16px;
-    padding-bottom: 16px;
+    padding-top: 12px;
+    padding-bottom: 12px;
   }
 }
 @media (max-width: 1200px) {
   .sidebar {
-    width: 210px;
-    padding-inline: 12px;
+    width: var(--sidebar-width, 190px);
+    padding-inline: 8px;
   }
   .brand-row {
-    gap: 9px;
+    gap: 7px;
   }
   .workspace-label {
     font-size: 7px;
   }
   .main-shell {
-    margin-left: 210px;
+    margin-left: var(--sidebar-width, 190px);
   }
   main {
-    padding: 27px 24px 0;
+    padding: 20px 16px 0;
   }
   .topbar {
-    padding-inline: 24px;
+    padding-inline: 16px;
   }
   .page-heading {
     gap: 15px;
@@ -2313,12 +2322,21 @@ tbody tr:hover {
   }
 }
 @media (max-width: 950px) {
+  :root {
+    --sidebar-width: 175px;
+  }
   .sidebar {
-    width: 185px;
-    padding-inline: 10px;
+    width: var(--sidebar-width, 175px);
+    padding-inline: 8px;
   }
   .main-shell {
-    margin-left: 185px;
+    margin-left: var(--sidebar-width, 175px);
+  }
+  main {
+    padding: 16px 14px 0;
+  }
+  .topbar {
+    padding-inline: 14px;
   }
   .workspace-label {
     display: none;
@@ -2406,10 +2424,17 @@ tbody tr:hover {
   }
 }
 @media (max-width: 700px) {
+  :root {
+    --sidebar-width: 0px;
+  }
   .sidebar {
     transform: translateX(-100%);
-    transition: transform 0.2s;
-    width: 235px;
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    width: 250px;
+    max-width: 82vw;
+    box-shadow: 0 0 30px rgba(18, 20, 30, 0.2);
+    padding: 20px 14px 0;
+    z-index: 50;
   }
   .sidebar.visible {
     transform: translateX(0);
@@ -2428,32 +2453,33 @@ tbody tr:hover {
     inset: 0;
     background: #25243755;
     border: 0;
-    z-index: 29;
+    z-index: 49;
+    backdrop-filter: blur(2px);
   }
   .topbar {
-    height: 58px;
-    padding-inline: 18px;
+    height: 54px;
+    padding-inline: 12px;
   }
   .topbar-right {
-    gap: 12px;
+    gap: 10px;
   }
   .environment {
     font-size: 10px;
   }
   .breadcrumb {
-    gap: 7px;
+    gap: 6px;
     font-size: 12px;
   }
   main {
-    padding: 24px 17px 0;
+    padding: 14px 10px 0;
   }
   .page-heading {
     flex-direction: column;
-    gap: 17px;
-    margin-bottom: 20px;
+    gap: 12px;
+    margin-bottom: 16px;
   }
   .page-heading h1 {
-    font-size: 26px;
+    font-size: 22px;
   }
   .heading-actions {
     flex-direction: row;
@@ -3407,7 +3433,7 @@ tbody tr:hover {
   gap: 5px;
   border-radius: 5px;
   font-size: 11px;
-  padding: 5px 7px;
+  padding: 3px 6px;
   white-space: nowrap;
   font-weight: 500;
 }

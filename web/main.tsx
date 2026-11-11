@@ -409,92 +409,93 @@ function App() {
           )}
         </header>
         <main>
-          <div
-            className={`page-heading ${['Orders', 'Messages', 'Integrations', 'Inbox'].includes(page) ? 'compact-heading' : ''}`}
-          >
-            <div>
-              {!['Orders', 'Messages', 'Integrations', 'Inbox'].includes(page) && (
-                <div className="eyebrow">YOUR COMMERCE, CONNECTED</div>
-              )}
-              <h1>{page === 'Overview' ? 'A little less busywork.' : page}</h1>
-              {!['Orders', 'Messages', 'Integrations', 'Inbox'].includes(page) && (
-                <p>
-                  {
+          {page !== 'Orders' && (
+            <div
+              className={`page-heading ${['Messages', 'Integrations', 'Inbox'].includes(page) ? 'compact-heading' : ''}`}
+            >
+              <div>
+                {!['Messages', 'Integrations', 'Inbox'].includes(page) && (
+                  <div className="eyebrow">YOUR COMMERCE, CONNECTED</div>
+                )}
+                <h1>{page === 'Overview' ? 'A little less busywork.' : page}</h1>
+                {!['Messages', 'Integrations', 'Inbox'].includes(page) && (
+                  <p>
                     {
-                      Overview: 'Your orders, conversations, and next steps. All in one place.',
-                      Orders: 'Keep every order moving, from confirmation to dispatch.',
-                      Inbox: 'Helpful conversations. Clear handoffs. Nothing lost.',
-                      Messages: 'Track message requests, delivery updates, and failures.',
-                      Automations:
-                        'Let the routine run itself. Keep control of the important things.',
-                      Integrations: 'Connect your store and customer conversations securely.',
-                      Reliability: 'Recover missed orders and review processing failures.',
-                      Reports: 'A clear picture of what happened and what needs attention.',
-                      Settings: 'Make Relay work the way your store does.',
-                    }[page]
-                  }
-                </p>
-              )}
-            </div>
-            <div className="heading-actions">
-              {(page === 'Overview' || page === 'Reports') && (
-                <button
-                  className="button secondary"
-                  onClick={() => {
-                    download(
-                      'relay-orders.csv',
-                      [
+                      {
+                        Overview: 'Your orders, conversations, and next steps. All in one place.',
+                        Inbox: 'Helpful conversations. Clear handoffs. Nothing lost.',
+                        Messages: 'Track message requests, delivery updates, and failures.',
+                        Automations:
+                          'Let the routine run itself. Keep control of the important things.',
+                        Integrations: 'Connect your store and customer conversations securely.',
+                        Reliability: 'Recover missed orders and review processing failures.',
+                        Reports: 'A clear picture of what happened and what needs attention.',
+                        Settings: 'Make Relay work the way your store does.',
+                      }[page]
+                    }
+                  </p>
+                )}
+              </div>
+              <div className="heading-actions">
+                {(page === 'Overview' || page === 'Reports') && (
+                  <button
+                    className="button secondary"
+                    onClick={() => {
+                      download(
+                        'relay-orders.csv',
                         [
-                          'Order',
-                          'Customer',
-                          'Phone',
-                          'Payment Method',
-                          'Financial Status',
-                          'Amount',
-                          'Currency',
-                          'Confirmation Status',
-                          'Fulfillment',
-                          'Courier',
-                          'Tracking Number',
-                          'Tracking URL',
-                        ],
-                        ...w.orders.map((o) => [
-                          o.number,
-                          o.name,
-                          o.phone ? `+${o.phone}` : '',
-                          o.paymentMethod ?? (o.isCod === false ? 'Prepaid' : 'Cash on delivery'),
-                          o.financialStatus ?? 'pending',
-                          o.amount,
-                          o.currency,
-                          o.status,
-                          o.delivery,
-                          o.trackingCompany ?? '',
-                          o.trackingNumber ?? '',
-                          o.trackingUrl ?? '',
-                        ]),
-                      ]
-                        .map((row) => row.map(csv).join(','))
-                        .join('\r\n'),
-                    );
-                    setToast('Order report downloaded');
-                  }}
-                >
-                  <ArrowDownToLine size={16} />
-                  Export report
-                </button>
-              )}
-              {data.mode === 'demo' && page === 'Overview' && (
-                <button
-                  className="button primary"
-                  disabled={data.mode !== 'demo'}
-                  onClick={() => setSimulator(true)}
-                >
-                  <FlaskConical size={16} />
-                  Test workflow
-                </button>
-              )}
+                          [
+                            'Order',
+                            'Customer',
+                            'Phone',
+                            'Payment Method',
+                            'Financial Status',
+                            'Amount',
+                            'Currency',
+                            'Confirmation Status',
+                            'Fulfillment',
+                            'Courier',
+                            'Tracking Number',
+                            'Tracking URL',
+                          ],
+                          ...w.orders.map((o) => [
+                            o.number,
+                            o.name,
+                            o.phone ? `+${o.phone}` : '',
+                            o.paymentMethod ?? (o.isCod === false ? 'Prepaid' : 'Cash on delivery'),
+                            o.financialStatus ?? 'pending',
+                            o.amount,
+                            o.currency,
+                            o.status,
+                            o.delivery,
+                            o.trackingCompany ?? '',
+                            o.trackingNumber ?? '',
+                            o.trackingUrl ?? '',
+                          ]),
+                        ]
+                          .map((row) => row.map(csv).join(','))
+                          .join('\r\n'),
+                      );
+                      setToast('Order report downloaded');
+                    }}
+                  >
+                    <ArrowDownToLine size={16} />
+                    Export report
+                  </button>
+                )}
+                {data.mode === 'demo' && page === 'Overview' && (
+                  <button
+                    className="button primary"
+                    disabled={data.mode !== 'demo'}
+                    onClick={() => setSimulator(true)}
+                  >
+                    <FlaskConical size={16} />
+                    Test workflow
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
           {data.mode === 'demo' && (
             <div className="demo-banner">
               <span className="demo-banner-icon">

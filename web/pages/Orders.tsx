@@ -326,11 +326,13 @@ export function Orders({
 
   return (
     <>
-      <section className="panel order-operations-panel">
-        <div className="order-sync-controls">
-          <label className="field">
-            <span>Sync period</span>
+      <h1 className="sr-only">Orders</h1>
+      <section className="panel order-operations-panel compact-sync-panel">
+        <div className="order-sync-bar">
+          <div className="order-sync-inputs">
             <select
+              aria-label="Sync lookback period"
+              className="sync-days-select"
               value={days}
               disabled={busy || syncing}
               onChange={(e) => setDays(Number(e.target.value))}
@@ -341,19 +343,28 @@ export function Orders({
                 </option>
               ))}
             </select>
-          </label>
-          <label className="integration-test-consent">
-            <input
-              type="checkbox"
-              checked={restoreRemoved}
-              disabled={busy || syncing}
-              onChange={(e) => setRestoreRemoved(e.target.checked)}
-            />
-            Restore removed orders
-          </label>
+            <label className="sync-checkbox-label">
+              <input
+                type="checkbox"
+                checked={restoreRemoved}
+                disabled={busy || syncing}
+                onChange={(e) => setRestoreRemoved(e.target.checked)}
+              />
+              Restore removed orders
+            </label>
+            <span className="order-sync-status muted" role="status">
+              {syncError ||
+                status?.sync.error ||
+                (syncing
+                  ? 'Syncing with Shopify…'
+                  : status?.sync.lastSuccessAt
+                    ? 'Last sync: ' + new Date(status.sync.lastSuccessAt).toLocaleString()
+                    : 'No completed sync yet')}
+            </span>
+          </div>
           <button
             type="button"
-            className="button primary"
+            className="button primary compact-sync-btn"
             disabled={busy || syncing || !w.integration.hasShopifyToken}
             onClick={() =>
               void act(async () => {
@@ -371,21 +382,12 @@ export function Orders({
               }, 'Shopify sync started. Progress appears above the order list.')
             }
           >
-            <RefreshCw size={16} className={syncing ? 'spin' : undefined} />
-            {syncing ? 'Syncing Shopify…' : 'Sync from Shopify'}
+            <RefreshCw size={14} className={syncing ? 'spin' : undefined} />
+            {syncing ? 'Syncing…' : 'Sync from Shopify'}
           </button>
         </div>
-        <p className="muted" role="status">
-          {syncError ||
-            status?.sync.error ||
-            (syncing
-              ? 'Sync is queued or processing. The list refreshes automatically.'
-              : status?.sync.lastSuccessAt
-                ? 'Last sync: ' + new Date(status.sync.lastSuccessAt).toLocaleString()
-                : 'No completed sync yet.')}
-        </p>
         {!w.integration.hasShopifyToken && (
-          <p>Connect Shopify in Integrations before synchronizing.</p>
+          <p className="sync-warn muted">Connect Shopify in Integrations before synchronizing.</p>
         )}
       </section>
       <section className="panel">

@@ -3068,27 +3068,55 @@ tbody tr:hover {
   padding: 16px 20px;
   margin-bottom: 18px;
 }
-.order-sync-controls {
+.order-operations-panel.compact-sync-panel {
+  padding: 8px 14px;
+  margin-bottom: 12px;
+}
+.order-sync-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex-wrap: wrap;
-  gap: 18px;
-  margin: 0;
 }
-.order-sync-controls .field {
-  margin: 0;
-  min-width: 150px;
+.order-sync-inputs {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
 }
-.order-sync-controls .field > span {
-  display: none;
-}
-.order-sync-controls .integration-test-consent {
-  margin: 0;
-  flex: 1;
-}
-.order-operations-panel > p {
-  margin: 10px 0 0;
+.sync-days-select {
+  padding: 5px 8px;
   font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: #555d6e;
+}
+.sync-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #555d6e;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.order-sync-status {
+  font-size: 11px;
+  color: #7b8392;
+  white-space: nowrap;
+}
+.compact-sync-btn {
+  padding: 6px 12px;
+  min-height: 32px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.sync-warn {
+  margin: 6px 0 0;
+  font-size: 11px;
 }
 .order-bulk-toolbar {
   padding: 12px 20px;
@@ -3198,10 +3226,20 @@ tbody tr:hover {
   margin-bottom: 0;
 }
 @media (max-width: 700px) {
-  .order-sync-controls {
-    gap: 12px;
+  .compact-sync-panel {
+    padding: 10px 12px;
   }
-  .order-sync-controls > .button {
+  .order-sync-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .order-sync-inputs {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .compact-sync-btn {
     width: 100%;
     justify-content: center;
   }

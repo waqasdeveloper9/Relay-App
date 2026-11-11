@@ -20,7 +20,7 @@ In the Relay app's Shopify Dev Dashboard version:
 
 - Set App URL and Allowed redirection URL to the exact values above.
 - Disable embedding in the Shopify admin; Relay is a standalone dashboard.
-- Require `write_orders` and `read_legal_policies`, and keep the webhook API version at `2026-10`.
+- Require `write_orders` and `read_legal_policies`, and keep the webhook API version at `2026-10`. Optionally add `write_fulfillments` and `write_merchant_managed_fulfillment_orders` when using real-time fulfillment progress webhooks (`fulfillment_orders/*`, `fulfillments/*`, `fulfillment_events/*`), Relay-triggered fulfillment/tracking/delivered actions (`fulfill`, `update_tracking`, `mark_delivered`), and automated or manual Shopify fulfillment holds/progress (`fulfillmentOrderHold`, `fulfillmentOrderReleaseHold`, `fulfillmentOrderReportProgress`, `fulfillmentOrderOpen`). (Shopify treats `write_fulfillments` as satisfying `read_fulfillments`.) If your Shopify app version does not yet include the optional fulfillment scopes, connect using the default scopes first and enable **Include fulfillment hold, fulfill & tracking webhook scopes** in Relay when ready to reconnect.
 - Keep legacy installation disabled and release the updated configuration.
 - Ensure the app's distribution permits the intended store to install it. A custom-distributed single-client pilot and a public multi-merchant app have different distribution/review requirements; do not choose a distribution method casually because it cannot simply be switched later.
 

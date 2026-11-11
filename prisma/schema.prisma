@@ -117,8 +117,15 @@ model OrderLog {
   amount Decimal @db.Decimal(18, 4)
   currency String @db.VarChar(3)
   status OrderStatus @default(PENDING)
+  isCod Boolean @default(true)
+  financialStatus String @default("pending")
+  paymentMethod String @default("Cash on delivery")
   delivery String @default("Unfulfilled")
+  fulfillmentStatus String?
   trackingUrl String?
+  trackingNumber String?
+  trackingCompany String?
+  linkedPhones String[] @default([])
   consent Boolean @default(false)
   archivedAt DateTime?
   sourceUpdatedAt DateTime?
@@ -184,6 +191,7 @@ model AutomationJob {
   dueAt DateTime
   messageId String?
   error String?
+  payload Json?
   claimedAt DateTime?
   retryable Boolean @default(false)
   @@unique([merchantId, orderId, kind])

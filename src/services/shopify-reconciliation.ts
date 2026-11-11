@@ -1,37 +1,21 @@
 import { z } from 'zod';
 import { getStore, mutate } from './repository.js';
 import { freshShopifyIntegration } from './shopify-tokens.js';
-import { shopifyGraphql } from './providers.js';
+import { shopifyGraphql, shopifyOrderSnapshotSchema } from './providers.js';
 import { claimSync, getSyncState, updateSync } from './reliability-repository.js';
 import { reliability } from './reliability-settings.js';
-import { ingestOrder, repairMissingConfirmations } from './order-ingestion.js';
+import {
+  ingestOrder,
+  repairMissingConfirmations,
+  snapshotToIncomingOrder,
+} from './order-ingestion.js';
 import { notify, resolveNotification } from './notifications.js';
 import { retryDelay } from './retry-policy.js';
-const orderNode = z.object({
-  id: z.string(),
-  name: z.string(),
-  tags: z.array(z.string()).optional(),
-  phone: z.string().nullish(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  cancelledAt: z.string().nullable(),
-  displayFinancialStatus: z.string().nullable(),
-  displayFulfillmentStatus: z.string(),
-  paymentGatewayNames: z.array(z.string()),
-  currentTotalPriceSet: z.object({
-    shopMoney: z.object({ amount: z.string(), currencyCode: z.string() }),
-  }),
-  shippingAddress: z
-    .object({
-      name: z.string().nullable(),
-      phone: z.string().nullable(),
-      countryCodeV2: z.string().nullable(),
-    })
-    .nullable(),
-});
+import { hasShopifyScope } from '../models/workspace-defaults.js';
+
 const pageSchema = z.object({
   orders: z.object({
-    nodes: z.array(orderNode),
+    nodes: z.array(shopifyOrderSnapshotSchema),
     pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
   }),
 });
@@ -66,8 +50,9 @@ export async function reconcileMerchant(merchantId: string): Promise<void> {
       );
     await updateSync(merchantId, token, { windowStart: start, windowEnd: end });
     const i = await freshShopifyIntegration(merchantId);
-    const query =
-      'query RelayRecovery($after:String,$query:String!) { orders(first:50,after:$after,sortKey:UPDATED_AT,query:$query) { nodes { id name tags phone createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus paymentGatewayNames currentTotalPriceSet { shopMoney { amount currencyCode } } shippingAddress { name phone countryCodeV2 } } pageInfo { hasNextPage endCursor } } }';
+    const includeEvents = hasShopifyScope(i, 'read_fulfillments');
+    const includeCustomer = hasShopifyScope(i, 'read_customers');
+    const query = `query RelayRecovery($after:String,$query:String!) { orders(first:50,after:$after,sortKey:UPDATED_AT,query:$query) { nodes { id name tags phone createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus paymentGatewayNames customAttributes { key value } currentTotalPriceSet { shopMoney { amount currencyCode } } shippingAddress { name phone countryCodeV2 }${includeCustomer ? ' customer { smsMarketingConsent { marketingState } }' : ''} fulfillments(first: 10) { id status displayStatus trackingInfo(first: 5) { url number company }${includeEvents ? ' events(first: 10) { nodes { status happenedAt } }' : ''} } } pageInfo { hasNextPage endCursor } } }`;
     const page = pageSchema.parse(
       await shopifyGraphql(i, query, {
         after: claim.cursor,
@@ -87,32 +72,7 @@ export async function reconcileMerchant(merchantId: string): Promise<void> {
       )
         continue;
       await mutate(merchantId, (s) => {
-        ingestOrder(
-          s,
-          {
-            id,
-            phone: node.phone,
-            tags: node.tags?.join(', '),
-            name: node.name,
-            total_price: node.currentTotalPriceSet.shopMoney.amount,
-            currency: node.currentTotalPriceSet.shopMoney.currencyCode,
-            payment_gateway_names: node.paymentGatewayNames,
-            created_at: node.createdAt,
-            updated_at: node.updatedAt,
-            cancelled_at: node.cancelledAt,
-            financial_status: node.displayFinancialStatus?.toLowerCase(),
-            fulfillment_status: node.displayFulfillmentStatus === 'FULFILLED' ? 'fulfilled' : null,
-            shipping_address: node.shippingAddress
-              ? {
-                  name: node.shippingAddress.name,
-                  phone: node.shippingAddress.phone,
-                  country_code: node.shippingAddress.countryCodeV2 ?? undefined,
-                }
-              : null,
-          },
-          true,
-          claim.restoreArchived,
-        );
+        ingestOrder(s, snapshotToIncomingOrder(node), true, claim.restoreArchived);
       });
       await updateSync(merchantId, token, { leaseUntil: new Date(Date.now() + 120000) });
     }

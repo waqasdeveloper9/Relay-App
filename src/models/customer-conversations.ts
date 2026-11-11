@@ -1,4 +1,5 @@
 import type { Conversation, Message, Workspace } from './types.js';
+import { orderMatchesPhone } from './workspace-defaults.js';
 export function conversationPhone(
   w: Pick<Workspace, 'orders' | 'conversations'>,
   c: Conversation,
@@ -15,6 +16,7 @@ export function customerThreads(
 export interface CustomerConversation extends Conversation {
   name: string;
   phone: string;
+  linkedOrderIds: string[];
   messages: (Message & { orderId?: string })[];
 }
 export function customerConversations(
@@ -28,7 +30,18 @@ export function customerConversations(
     const key = phone || c.id;
     let group = groups.get(key);
     if (!group) {
-      group = { ...c, phone, name: order?.name ?? (phone || 'Customer'), messages: [] };
+      const linkedOrderIds = phone
+        ? w.orders.filter((o) => !o.archivedAt && orderMatchesPhone(o, phone)).map((o) => o.id)
+        : order && !order.archivedAt
+          ? [order.id]
+          : [];
+      group = {
+        ...c,
+        phone,
+        name: order?.name ?? (phone || 'Customer'),
+        linkedOrderIds,
+        messages: [],
+      };
       groups.set(key, group);
     }
     if (order && group.name === phone) group.name = order.name;

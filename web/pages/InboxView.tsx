@@ -1,35 +1,21 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Check, CheckCheck, Send, Users, Zap } from 'lucide-react';
+import { Check, CheckCheck, Link2, Send, Unlink2, Users, Zap } from 'lucide-react';
 import { customerConversations } from '../../src/models/customer-conversations';
 import { inboxReplyEligibility } from '../../src/models/inbox-eligibility';
+import {
+  isPhoneOptedOut,
+  quickReplies as getQuickReplies,
+} from '../../src/models/workspace-defaults';
 import { api, type Snapshot } from '../api';
 import { initials, time, type Act } from '../lib/format';
 import { Empty } from '../components/ui';
-
-const quickReplies = [
-  {
-    label: 'Order confirmed',
-    body: 'Thank you! Your Cash on Delivery order is confirmed and being prepared for dispatch.',
-  },
-  {
-    label: 'Ask order #',
-    body: 'Could you please share your order number (for example, #1001) so we can check this for you?',
-  },
-  {
-    label: 'Order dispatched',
-    body: 'Your order has been dispatched and is on its way. Reply here anytime if you need help.',
-  },
-  {
-    label: 'Delivery timing',
-    body: 'Standard Cash on Delivery delivery takes 2–4 working days depending on your city.',
-  },
-] as const;
 
 export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; act: Act }) {
   const w = data.workspace;
   const threads = useMemo(() => customerConversations(w), [w]);
   const [id, setId] = useState(threads[0]?.phone || threads[0]?.id);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [linkOrderId, setLinkOrderId] = useState('');
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -40,7 +26,14 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
     typeof HTMLElement !== 'undefined' && 'focusGroup' in HTMLElement.prototype;
   const inputId = useId();
   const hintId = useId();
+  const linkSelectId = useId();
   const c = threads.find((c) => (c.phone || c.id) === id) ?? threads[0];
+  const quickReplies = useMemo(() => getQuickReplies(w), [w]);
+  const optedOut = !!(c?.phone && isPhoneOptedOut(w, c.phone));
+  const unlinkedOrders = useMemo(
+    () => (c ? w.orders.filter((o) => !o.archivedAt && !c.linkedOrderIds.includes(o.id)) : []),
+    [c, w.orders],
+  );
 
   const replyCheck = useMemo(
     () =>
@@ -65,6 +58,9 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
   function setText(value: string) {
     setDrafts((previous) => ({ ...previous, [draftKey]: value }));
   }
+  useEffect(() => {
+    setLinkOrderId('');
+  }, [c?.id]);
   useEffect(() => {
     const marker = c ? `${c.id}:${c.messages.at(-1)?.id}` : '';
     if (c?.unread && !busy && !readAttempts.current.has(marker)) {
@@ -110,6 +106,7 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
           <span className="count-pill">{threads.length}</span>
         </div>
         {threads.map((con) => {
+          const conOptOut = !!(con.phone && isPhoneOptedOut(w, con.phone));
           return (
             <button
               key={con.id}
@@ -119,7 +116,10 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
             >
               <span className="avatar purple">{initials(con.name)}</span>
               <div>
-                <strong>{con.name}</strong>
+                <strong>
+                  {con.name}
+                  {conOptOut && ' (STOP)'}
+                </strong>
                 <p>{con.messages.at(-1)?.text}</p>
                 <small>{con.phone ? '+' + con.phone : 'No phone'}</small>
               </div>
@@ -163,6 +163,7 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
         <div className="chat-mode">
           <span className={`small-dot ${c.human ? 'amber' : 'green'}`} />
           {c.human ? 'Human handling · assistant paused' : 'Assistant handling'}
+          {optedOut && <span className="pill danger-pill">Unsubscribed (STOP)</span>}
           <span>
             {data.mode === 'demo'
               ? 'All messages are simulated'
@@ -171,6 +172,90 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
                 : 'Live reply unavailable'}
           </span>
         </div>
+        {c.phone && (
+          <div className="inbox-orders-bar">
+            <div className="inbox-linked-list">
+              <span className="muted">Linked orders:</span>
+              {c.linkedOrderIds.length ? (
+                c.linkedOrderIds.map((oid) => {
+                  const ord = w.orders.find((o) => o.id === oid);
+                  if (!ord) return null;
+                  const secondary = ord.phone !== c.phone;
+                  return (
+                    <span key={oid} className="pill linked-order-pill">
+                      {ord.number} · {ord.delivery}
+                      {secondary && (
+                        <button
+                          type="button"
+                          className="chip-remove"
+                          disabled={busy}
+                          aria-label={`Unlink ${ord.number} from +${c.phone}`}
+                          onClick={() => {
+                            void act(
+                              () =>
+                                api(`/conversations/${c.id}/action`, {
+                                  action: 'unlink_order',
+                                  orderId: ord.id,
+                                }),
+                              `Order ${ord.number} unlinked from +${c.phone}.`,
+                            );
+                          }}
+                        >
+                          <Unlink2 size={12} aria-hidden="true" />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })
+              ) : (
+                <span className="muted">None linked yet</span>
+              )}
+            </div>
+            {unlinkedOrders.length > 0 && (
+              <form
+                method="POST"
+                className="inbox-link-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (busy || !linkOrderId) return;
+                  const chosen = w.orders.find((o) => o.id === linkOrderId);
+                  void act(
+                    async () => {
+                      await api(`/conversations/${c.id}/action`, {
+                        action: 'link_order',
+                        orderId: linkOrderId,
+                      });
+                      setLinkOrderId('');
+                    },
+                    `Linked ${chosen?.number ?? 'order'} for WhatsApp tracking lookup.`,
+                  );
+                }}
+              >
+                <label htmlFor={linkSelectId} className="sr-only">
+                  Link Shopify order to this WhatsApp number
+                </label>
+                <select
+                  id={linkSelectId}
+                  name="orderId"
+                  disabled={busy}
+                  value={linkOrderId}
+                  onChange={(e) => setLinkOrderId(e.target.value)}
+                >
+                  <option value="">Link order number…</option>
+                  {unlinkedOrders.map((ord) => (
+                    <option key={ord.id} value={ord.id}>
+                      {ord.number} · {ord.name} ({ord.delivery})
+                    </option>
+                  ))}
+                </select>
+                <button type="submit" className="button secondary" disabled={busy || !linkOrderId}>
+                  <Link2 size={14} aria-hidden="true" />
+                  Link
+                </button>
+              </form>
+            )}
+          </div>
+        )}
         <div className="messages" ref={messagesRef}>
           {c.messages.map((m) => {
             const outboundStatus = trackedStatus(m);
@@ -214,6 +299,7 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
           })}
         </div>
         <form
+          method="POST"
           className="composer"
           onSubmit={(e) => {
             e.preventDefault();
@@ -293,7 +379,7 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
             >
               {quickReplies.map((q, index) => (
                 <button
-                  key={q.label}
+                  key={`${q.label}-${index}`}
                   type="button"
                   className="quick-reply-chip"
                   tabIndex={supportsFocusGroup ? undefined : index === activeChip ? 0 : -1}
@@ -331,18 +417,20 @@ export function InboxView({ data, busy, act }: { data: Snapshot; busy: boolean; 
             }}
             placeholder={
               simulate
-                ? 'Try: Confirm, Where is my parcel?, or Please change my address…'
+                ? 'Try: Confirm, Where is my parcel?, STOP, or Please change my address…'
                 : 'Write a helpful reply…'
             }
             maxLength={2000}
           />
           <div className="composer-bottom">
             <small id={hintId}>
-              {data.mode === 'demo'
-                ? 'No messages leave this demo workspace.'
-                : replyCheck.allowed
-                  ? 'Sends via your connected WhatsApp sender within Meta’s 24-hour customer reply window.'
-                  : (replyCheck.reason ?? 'Live sending is unavailable for this conversation.')}
+              {optedOut
+                ? 'This number opted out (STOP); automated alerts and bot replies are disabled until customer replies START or is re-enabled in Settings.'
+                : data.mode === 'demo'
+                  ? 'No messages leave this demo workspace.'
+                  : replyCheck.allowed
+                    ? 'Sends via your connected WhatsApp sender within Meta’s 24-hour customer reply window.'
+                    : (replyCheck.reason ?? 'Live sending is unavailable for this conversation.')}
             </small>
             <button
               type="submit"

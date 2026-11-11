@@ -1,7 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { ArrowUpRight, MoreHorizontal, Package, X, Zap, AlertCircle } from 'lucide-react';
 import type { Order, OutboundMessage } from '../../src/models/types';
-import { money, initials, statusLabels, time } from '../lib/format';
+import {
+  deliveryClass,
+  money,
+  initials,
+  paymentClass,
+  paymentLabel,
+  statusLabels,
+  time,
+} from '../lib/format';
 
 export function Badge({ status }: { status: Order['status'] }) {
   return (
@@ -196,6 +204,8 @@ export function OrderTable({
   onToggle,
   onTogglePage,
   selectionDisabled,
+  caption = 'Orders',
+  regionLabel = 'Orders table',
 }: {
   selectedIds?: ReadonlySet<string>;
   onToggle?: (id: string) => void;
@@ -204,14 +214,17 @@ export function OrderTable({
   messages?: OutboundMessage[];
   orders: Order[];
   onSelect: (o: Order) => void;
+  caption?: string;
+  regionLabel?: string;
 }) {
   return (
-    <div className="table-scroll">
+    <div className="table-scroll" tabIndex={0} role="region" aria-label={regionLabel}>
       <table>
+        <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
             {selectedIds && (
-              <th className="order-checkbox-cell">
+              <th scope="col" className="order-checkbox-cell">
                 <input
                   type="checkbox"
                   aria-label="Select all orders on this page"
@@ -227,14 +240,15 @@ export function OrderTable({
                 />
               </th>
             )}
-            <th>Order</th>
-            <th>Customer</th>
-            <th>Amount</th>
-            <th>Confirmation</th>
-            {messages && <th>WhatsApp</th>}
-            <th>Fulfillment</th>
-            <th>Received</th>
-            <th>
+            <th scope="col">Order</th>
+            <th scope="col">Customer</th>
+            <th scope="col">Amount</th>
+            <th scope="col">Payment</th>
+            <th scope="col">Confirmation</th>
+            {messages && <th scope="col">WhatsApp</th>}
+            <th scope="col">Fulfillment</th>
+            <th scope="col">Received</th>
+            <th scope="col">
               <span className="sr-only">Details</span>
             </th>
           </tr>
@@ -257,8 +271,9 @@ export function OrderTable({
                   />
                 </td>
               )}
-              <td>
+              <th scope="row">
                 <button
+                  type="button"
                   className="order-number"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -268,7 +283,7 @@ export function OrderTable({
                   {o.number}
                   <ArrowUpRight size={12} />
                 </button>
-              </td>
+              </th>
               <td>
                 <div className="customer-cell">
                   <span className={`avatar ${['purple', 'peach', 'blue', 'mint'][i % 4]}`}>
@@ -282,7 +297,15 @@ export function OrderTable({
               </td>
               <td className="amount-cell">
                 {money(o.amount, o.currency)}
-                <small>Cash on delivery</small>
+                <small>
+                  {o.paymentMethod ?? (o.isCod === false ? 'Prepaid' : 'Cash on delivery')}
+                </small>
+              </td>
+              <td>
+                <span className={`payment-pill ${paymentClass(o.financialStatus, o.isCod)}`}>
+                  <span aria-hidden="true" />
+                  {paymentLabel(o.financialStatus, o.isCod)}
+                </span>
               </td>
               <td>
                 <Badge status={o.status} />
@@ -295,6 +318,9 @@ export function OrderTable({
                         m.orderId === o.id &&
                         !['SUPPORT_REPLY', 'SUPPORT_MENU', 'INBOX_REPLY'].includes(m.kind),
                     );
+                    if (!m && o.isCod === false && !o.messageBlockedReason) {
+                      return <span className="message-status">Non-COD (alerts only)</span>;
+                    }
                     return (
                       <>
                         <span
@@ -324,16 +350,19 @@ export function OrderTable({
                 </td>
               )}
               <td>
-                <span
-                  className={`fulfillment ${o.delivery === 'In transit' ? 'transit' : o.delivery === 'Delivered' ? 'delivered' : ''}`}
-                >
+                <span className={`fulfillment ${deliveryClass(o.delivery)}`}>
                   <span />
                   {o.delivery}
                 </span>
+                {(o.trackingCompany || o.trackingNumber) && (
+                  <small className="tracking-snippet">
+                    {[o.trackingCompany, o.trackingNumber].filter(Boolean).join(' · ')}
+                  </small>
+                )}
               </td>
               <td className="time-cell">{time(o.createdAt)}</td>
               <td>
-                <button className="icon-button" aria-label={`View order ${o.number}`}>
+                <button type="button" className="icon-button" aria-label={`View order ${o.number}`}>
                   <MoreHorizontal size={18} />
                 </button>
               </td>

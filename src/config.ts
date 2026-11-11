@@ -7,6 +7,15 @@ function required(name: string): string {
   if (!value) throw new Error(`${name} is required outside demo mode`);
   return value;
 }
+const envScopes = (process.env.SHOPIFY_SCOPES ?? '')
+  .split(',')
+  .map((v) => v.trim())
+  .filter(Boolean);
+const requiredShopifyScopes = ['write_orders', 'read_legal_policies'];
+const optionalFulfillmentScopes = [
+  'write_fulfillments',
+  'write_merchant_managed_fulfillment_orders',
+];
 export const config = {
   demo,
   allowedOrigins: (process.env.ALLOWED_ORIGINS ?? '')
@@ -22,7 +31,9 @@ export const config = {
   encryptionKey: demo ? randomBytes(32).toString('base64') : required('ENCRYPTION_KEY'),
   shopifyClientId: process.env.SHOPIFY_CLIENT_ID ?? '',
   shopifySecret: process.env.SHOPIFY_CLIENT_SECRET || process.env.SHOPIFY_APP_SECRET || '',
-  shopifyScopes: ['write_orders', 'read_legal_policies'],
+  shopifyRequiredScopes: requiredShopifyScopes,
+  shopifyFulfillmentScopes: optionalFulfillmentScopes,
+  shopifyScopes: envScopes.length ? envScopes : requiredShopifyScopes,
   serveWeb: process.env.SERVE_WEB === 'true' || process.env.NODE_ENV === 'production',
   metaSecret: '',
   metaVerifyToken: '',

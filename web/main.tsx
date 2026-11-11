@@ -192,9 +192,9 @@ function App() {
     if (busy) return;
     setBusy(true);
     try {
-      await fn();
+      const outcome = await fn();
       await refresh();
-      setToast(message);
+      setToast(typeof outcome === 'string' && outcome ? outcome : message);
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'Something went wrong');
     } finally {
@@ -230,7 +230,9 @@ function App() {
   const w = data.workspace;
   const openTasks = w.tasks.filter((t) => t.status !== 'VERIFIED');
   const currentOrder = selected ? w.orders.find((o) => o.id === selected.id) : undefined;
-  const currencyTotals = w.orders
+  const codOrders = w.orders.filter((o) => o.isCod !== false);
+  const codConfirmedCount = codOrders.filter((o) => o.status === 'CONFIRMED').length;
+  const currencyTotals = codOrders
     .filter((o) => o.status === 'CONFIRMED')
     .reduce<Record<string, number>>(
       (sum, o) => ({ ...sum, [o.currency]: (sum[o.currency] ?? 0) + o.amount }),
@@ -442,14 +444,33 @@ function App() {
                     download(
                       'relay-orders.csv',
                       [
-                        ['Order', 'Customer', 'Amount', 'Currency', 'Status', 'Fulfillment'],
+                        [
+                          'Order',
+                          'Customer',
+                          'Phone',
+                          'Payment Method',
+                          'Financial Status',
+                          'Amount',
+                          'Currency',
+                          'Confirmation Status',
+                          'Fulfillment',
+                          'Courier',
+                          'Tracking Number',
+                          'Tracking URL',
+                        ],
                         ...w.orders.map((o) => [
                           o.number,
                           o.name,
+                          o.phone ? `+${o.phone}` : '',
+                          o.paymentMethod ?? (o.isCod === false ? 'Prepaid' : 'Cash on delivery'),
+                          o.financialStatus ?? 'pending',
                           o.amount,
                           o.currency,
                           o.status,
                           o.delivery,
+                          o.trackingCompany ?? '',
+                          o.trackingNumber ?? '',
+                          o.trackingUrl ?? '',
                         ]),
                       ]
                         .map((row) => row.map(csv).join(','))
@@ -501,18 +522,18 @@ function App() {
                   points="0,32 10,26 20,29 30,16 40,22 50,9 60,14 70,3"
                 />
                 <Stat
-                  title="Confirmed orders"
-                  value={String(w.orders.filter((o) => o.status === 'CONFIRMED').length)}
+                  title="Confirmed COD orders"
+                  value={String(codConfirmedCount)}
                   icon={CircleCheck}
-                  detail={`${w.orders.length ? Math.round((w.orders.filter((o) => o.status === 'CONFIRMED').length / w.orders.length) * 100) : 0}% of all orders`}
+                  detail={`${codOrders.length ? Math.round((codConfirmedCount / codOrders.length) * 100) : 0}% of COD orders`}
                   color="green"
                   points="0,33 10,29 20,30 30,20 40,24 50,13 60,15 70,5"
                 />
                 <Stat
                   title="Awaiting a reply"
-                  value={String(w.orders.filter((o) => o.status === 'PENDING').length)}
+                  value={String(codOrders.filter((o) => o.status === 'PENDING').length)}
                   icon={Clock3}
-                  detail="Customers yet to confirm"
+                  detail="COD customers yet to confirm"
                   color="amber"
                   points="0,15 10,21 20,10 30,17 40,12 50,23 60,16 70,20"
                 />
@@ -681,6 +702,7 @@ function App() {
               busy={busy}
               act={act}
               workspace={w}
+              mode={data.mode}
               search={search}
               setSearch={setSearch}
               onSelect={setSelected}
@@ -778,6 +800,7 @@ function App() {
         <OrderDrawer
           order={currentOrder}
           workspace={w}
+          mode={data.mode}
           close={() => setSelected(undefined)}
           busy={busy}
           act={act}

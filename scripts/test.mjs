@@ -13,6 +13,7 @@ const result = spawnSync(
     'src/tests/api.test.ts',
     'src/tests/shopify-oauth.test.ts',
     'src/tests/order-confirmation.test.ts',
+    'src/tests/fulfillment-sync.test.ts',
   ],
   {
     stdio: 'inherit',

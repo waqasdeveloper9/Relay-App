@@ -15,6 +15,8 @@ import {
   conversation,
   enqueue,
   handleIncoming,
+  markForReview,
+  queueShopifyOrderAction,
 } from '../services/automation.js';
 import { decrypt, encrypt, phone } from '../utils/security.js';
 import {
@@ -22,6 +24,7 @@ import {
   checkWhatsapp,
   sendHelloWorldTest,
   request as providerRequest,
+  validateUtilityTemplate,
 } from '../services/providers.js';
 import { InputError } from '../utils/errors.js';
 import { freshShopifyIntegration } from '../services/shopify-tokens.js';
@@ -38,6 +41,7 @@ import {
 } from '../services/reliability-repository.js';
 import { planOrderMessage } from '../services/order-ingestion.js';
 import { validateConfirmationTemplate } from '../services/order-confirmation.js';
+import { dispatchSettings } from '../models/workspace-defaults.js';
 
 export function snapshot(req: Request, res: Response): void {
   res.json({
@@ -62,10 +66,84 @@ export function snapshot(req: Request, res: Response): void {
 export async function testOrderTemplate(req: Request, res: Response): Promise<void> {
   if (config.demo)
     throw new InputError('Save a real WhatsApp connection to validate the approved template');
-  await validateConfirmationTemplate(req.store.workspace.integration);
+  const input = z
+    .object({
+      kind: z
+        .enum(['confirmation', 'dispatch', 'delivery', 'paid', 'in_progress', 'on_hold'])
+        .default('confirmation'),
+      templateName: z
+        .string()
+        .trim()
+        .regex(/^[a-z0-9_]{1,100}$/)
+        .optional(),
+      languageCode: z
+        .string()
+        .trim()
+        .regex(/^[a-z]{2}(?:_[A-Z]{2})?$/)
+        .optional(),
+      variables: z.array(z.string()).max(7).optional(),
+      includeTrackingButtonUrl: z.boolean().optional(),
+    })
+    .default({})
+    .parse(req.body ?? {});
+
+  if (input.kind === 'confirmation') {
+    await validateConfirmationTemplate(req.store.workspace.integration);
+    res.json({
+      message:
+        'Approved six-variable template and Confirm/Cancel buttons verified. Configure and verify the Meta reply webhook before enabling the order test.',
+    });
+    return;
+  }
+
+  const saved = dispatchSettings(req.store.workspace);
+  const templateDefaults = {
+    dispatch: {
+      name: saved.templateName,
+      lang: saved.languageCode,
+      vars: saved.variables,
+      urlBtn: saved.includeTrackingButtonUrl,
+    },
+    delivery: {
+      name: saved.deliveredTemplateName,
+      lang: saved.deliveredLanguageCode,
+      vars: saved.deliveredVariables,
+      urlBtn: false,
+    },
+    paid: {
+      name: saved.paidTemplateName,
+      lang: saved.paidLanguageCode,
+      vars: saved.paidVariables,
+      urlBtn: false,
+    },
+    in_progress: {
+      name: saved.inProgressTemplateName,
+      lang: saved.inProgressLanguageCode,
+      vars: saved.inProgressVariables,
+      urlBtn: false,
+    },
+    on_hold: {
+      name: saved.onHoldTemplateName,
+      lang: saved.onHoldLanguageCode,
+      vars: saved.onHoldVariables,
+      urlBtn: false,
+    },
+  }[input.kind];
+  const templateName = input.templateName ?? templateDefaults.name;
+  const languageCode = input.languageCode ?? templateDefaults.lang;
+  const vars = input.variables ?? templateDefaults.vars;
+  const requireUrlButton =
+    input.kind === 'dispatch' ? (input.includeTrackingButtonUrl ?? templateDefaults.urlBtn) : false;
+  const result = await validateUtilityTemplate(req.store.workspace.integration, {
+    templateName,
+    languageCode,
+    expectedVariables: vars.length,
+    requireUrlButton,
+  });
   res.json({
-    message:
-      'Approved six-variable template and Confirm/Cancel buttons verified. Configure and verify the Meta reply webhook before enabling the order test.',
+    ok: true,
+    hasUrlButton: result.hasUrlButton,
+    message: `Approved ${input.kind} template "${templateName}" verified with ${vars.length} positional variable(s)${requireUrlButton ? ' and dynamic tracking URL button' : ''}.`,
   });
 }
 
@@ -125,14 +203,52 @@ export async function orderAction(req: Request, res: Response): Promise<void> {
     const o = s.workspace.orders.find((o) => o.id === req.params.id && !o.archivedAt);
     if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
     if (action === 'confirm') confirm(s.workspace, o);
-    else {
-      if (o.status === 'CANCELLED')
-        throw new InputError('A cancelled order cannot be moved to review');
-      o.status = 'NEEDS_REVIEW';
-      activity(s.workspace, `${o.number} moved to review`);
-    }
+    else markForReview(s.workspace, o, 'moved to review');
   });
   res.json({ ok: true });
+}
+export async function shopifyOrderAction(req: Request, res: Response): Promise<void> {
+  const input = z
+    .object({
+      action: z.enum([
+        'mark_paid',
+        'mark_in_progress',
+        'reopen',
+        'hold',
+        'release_hold',
+        'fulfill',
+        'update_tracking',
+        'mark_delivered',
+      ]),
+      trackingCompany: z.string().trim().max(100).optional(),
+      trackingNumber: z.string().trim().max(100).optional(),
+      trackingUrl: z
+        .union([
+          z.literal(''),
+          z
+            .string()
+            .trim()
+            .url()
+            .max(500)
+            .refine((v) => v.startsWith('https://'), 'Tracking URL must start with https://'),
+        ])
+        .optional(),
+      notifyCustomer: z.boolean().optional(),
+      reasonNotes: z.string().trim().max(250).optional(),
+    })
+    .parse(req.body);
+  const result = await mutate(req.merchantId, (s) => {
+    const o = s.workspace.orders.find((o) => o.id === req.params.id && !o.archivedAt);
+    if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
+    return queueShopifyOrderAction(s.workspace, o, input.action, {
+      trackingCompany: input.trackingCompany,
+      trackingNumber: input.trackingNumber,
+      trackingUrl: input.trackingUrl || undefined,
+      notifyCustomer: input.notifyCustomer,
+      reasonNotes: input.reasonNotes,
+    });
+  });
+  res.json({ ok: true, ...result });
 }
 export async function simulate(req: Request, res: Response): Promise<void> {
   if (!config.demo) {
@@ -302,6 +418,16 @@ export async function testIntegration(req: Request, res: Response): Promise<void
   });
   res.json({ ok: true, message: `Connection verified: ${label}` });
 }
+const dispatchVarEnum = z.enum([
+  'customer_name',
+  'brand_name',
+  'order_number',
+  'courier',
+  'tracking_number',
+  'tracking_url',
+  'total_amount',
+]);
+
 export async function saveSettings(req: Request, res: Response): Promise<void> {
   const input = z
     .object({
@@ -319,11 +445,173 @@ export async function saveSettings(req: Request, res: Response): Promise<void> {
         }
       }),
       policy: z.string().trim().min(1).max(3000),
+      shopifySync: z
+        .object({
+          importNonCodOrders: z.boolean(),
+          codGatewayKeywords: z.array(z.string().trim().min(1).max(60)).min(1).max(20),
+          confirmedTag: z.string().trim().min(1).max(60),
+          reviewTag: z.string().trim().min(1).max(60),
+          cancellationRequestedTag: z.string().trim().min(1).max(60),
+          tagOnReview: z.boolean(),
+          autoHoldUnconfirmed: z.boolean(),
+          holdOnReview: z.boolean(),
+          holdOnCancellationRequest: z.boolean(),
+          releaseHoldOnConfirm: z.boolean(),
+          holdReasonNotes: z.string().trim().min(1).max(250),
+          syncCustomerSmsConsent: z.boolean().optional(),
+          checkoutConsentAttributeKey: z.string().trim().max(60).optional(),
+          checkoutConsentValues: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+        })
+        .optional(),
+      dispatchNotifications: z
+        .object({
+          enabled: z.boolean(),
+          templateName: z
+            .string()
+            .trim()
+            .regex(/^$|^[a-z0-9_]{1,100}$/),
+          languageCode: z
+            .string()
+            .trim()
+            .regex(/^[a-z]{2}(?:_[A-Z]{2})?$/),
+          variables: z.array(dispatchVarEnum).max(7),
+          includeTrackingButtonUrl: z.boolean(),
+          notifyOnPartial: z.boolean(),
+          deliveredEnabled: z.boolean(),
+          deliveredTemplateName: z
+            .string()
+            .trim()
+            .regex(/^$|^[a-z0-9_]{1,100}$/),
+          deliveredLanguageCode: z
+            .string()
+            .trim()
+            .regex(/^[a-z]{2}(?:_[A-Z]{2})?$/),
+          deliveredVariables: z.array(dispatchVarEnum).max(7),
+          paidEnabled: z.boolean().optional(),
+          paidTemplateName: z
+            .string()
+            .trim()
+            .regex(/^$|^[a-z0-9_]{1,100}$/)
+            .optional(),
+          paidLanguageCode: z
+            .string()
+            .trim()
+            .regex(/^[a-z]{2}(?:_[A-Z]{2})?$/)
+            .optional(),
+          paidVariables: z.array(dispatchVarEnum).max(7).optional(),
+          inProgressEnabled: z.boolean().optional(),
+          inProgressTemplateName: z
+            .string()
+            .trim()
+            .regex(/^$|^[a-z0-9_]{1,100}$/)
+            .optional(),
+          inProgressLanguageCode: z
+            .string()
+            .trim()
+            .regex(/^[a-z]{2}(?:_[A-Z]{2})?$/)
+            .optional(),
+          inProgressVariables: z.array(dispatchVarEnum).max(7).optional(),
+          onHoldEnabled: z.boolean().optional(),
+          onHoldTemplateName: z
+            .string()
+            .trim()
+            .regex(/^$|^[a-z0-9_]{1,100}$/)
+            .optional(),
+          onHoldLanguageCode: z
+            .string()
+            .trim()
+            .regex(/^[a-z]{2}(?:_[A-Z]{2})?$/)
+            .optional(),
+          onHoldVariables: z.array(dispatchVarEnum).max(7).optional(),
+        })
+        .refine(
+          (d) => !d.enabled || !!d.templateName,
+          'Dispatch notifications require an approved template name',
+        )
+        .refine(
+          (d) => !d.deliveredEnabled || !!d.deliveredTemplateName,
+          'Delivery notifications require an approved template name',
+        )
+        .refine(
+          (d) => !d.paidEnabled || !!d.paidTemplateName,
+          'Payment notifications require an approved template name',
+        )
+        .refine(
+          (d) => !d.inProgressEnabled || !!d.inProgressTemplateName,
+          'In-progress notifications require an approved template name',
+        )
+        .refine(
+          (d) => !d.onHoldEnabled || !!d.onHoldTemplateName,
+          'On-hold notifications require an approved template name',
+        )
+        .optional(),
+      support: z
+        .object({
+          menuBody: z.string().trim().min(1).max(1024),
+          menuFooter: z.string().trim().max(60),
+          statusButtonTitle: z.string().trim().min(1).max(20),
+          policyButtonTitle: z.string().trim().min(1).max(20),
+          humanButtonTitle: z.string().trim().min(1).max(20),
+          menuCooldownHours: z.number().int().min(1).max(72),
+          handoffText: z.string().trim().min(1).max(1000),
+          noOrderText: z.string().trim().min(1).max(1000),
+          clarifyText: z.string().trim().min(1).max(1000),
+          optOutKeywords: z.array(z.string().trim().toLowerCase().min(1).max(40)).min(1).max(20),
+          optInKeywords: z.array(z.string().trim().toLowerCase().min(1).max(40)).min(1).max(20),
+          optOutConfirmationText: z.string().trim().min(1).max(1000),
+          optedOutPhones: z
+            .array(
+              z
+                .string()
+                .trim()
+                .regex(/^\d{10,15}$/),
+            )
+            .max(1000)
+            .optional(),
+        })
+        .optional(),
+      quickReplies: z
+        .array(
+          z.object({
+            label: z.string().trim().min(1).max(40),
+            body: z.string().trim().min(1).max(1000),
+          }),
+        )
+        .max(20)
+        .optional(),
+      orderViews: z
+        .array(
+          z.object({
+            id: z.string().trim().min(1).max(60),
+            name: z.string().trim().min(1).max(40),
+            tab: z.string().trim().min(1).max(40),
+            paymentFilter: z.string().trim().max(40),
+            fulfillmentFilter: z.string().trim().max(40),
+            search: z.string().trim().max(100),
+          }),
+        )
+        .max(20)
+        .optional(),
     })
     .parse(req.body);
   await mutate(req.merchantId, (s) => {
-    Object.assign(s.workspace.settings, input);
-    activity(s.workspace, 'Automation preferences updated');
+    const prevOptOut = s.workspace.settings.support?.optedOutPhones ?? [];
+    const prevViews = s.workspace.settings.orderViews;
+    Object.assign(s.workspace.settings, {
+      ...input,
+      ...(input.orderViews === undefined && prevViews !== undefined
+        ? { orderViews: prevViews }
+        : {}),
+      ...(input.support
+        ? {
+            support: {
+              ...input.support,
+              optedOutPhones: input.support.optedOutPhones ?? prevOptOut,
+            },
+          }
+        : {}),
+    });
+    activity(s.workspace, 'Workspace preferences updated');
   });
   res.json({ ok: true });
 }
@@ -367,8 +655,9 @@ export async function taskAction(req: Request, res: Response): Promise<void> {
 export async function conversationAction(req: Request, res: Response): Promise<void> {
   const input = z
     .object({
-      action: z.enum(['takeover', 'resume', 'reply', 'simulate']),
+      action: z.enum(['takeover', 'resume', 'reply', 'simulate', 'link_order', 'unlink_order']),
       text: z.string().trim().min(1).max(2000).optional(),
+      orderId: z.string().uuid().optional(),
     })
     .parse(req.body);
   if (input.action === 'simulate' && !config.demo) {
@@ -394,6 +683,30 @@ export async function conversationAction(req: Request, res: Response): Promise<v
       for (const thread of customerThreads(s.workspace, c)) thread.human = true;
     if (input.action === 'resume')
       for (const thread of customerThreads(s.workspace, c)) thread.human = false;
+    if (input.action === 'link_order' || input.action === 'unlink_order') {
+      if (!input.orderId) throw new InputError('Order selection is required');
+      const o = s.workspace.orders.find((ord) => ord.id === input.orderId && !ord.archivedAt);
+      if (!o) throw Object.assign(new Error('Order not found in workspace'), { status: 404 });
+      const digits = conversationPhone(s.workspace, c);
+      if (!digits) throw new InputError('Conversation has no customer WhatsApp number to link');
+      if (input.action === 'link_order') {
+        const list = [...new Set([...(o.linkedPhones ?? []), digits])];
+        o.linkedPhones = list;
+        append(
+          c,
+          'note',
+          `Linked order ${o.number} to WhatsApp number +${digits} for support tracking lookup.`,
+        );
+        activity(s.workspace, `Linked ${o.number} to customer ${digits} in Inbox`);
+      } else {
+        if (o.phone === digits)
+          throw new InputError('Primary order phone number cannot be unlinked from this thread');
+        o.linkedPhones = (o.linkedPhones ?? []).filter((p) => p !== digits);
+        append(c, 'note', `Unlinked order ${o.number} from WhatsApp number +${digits}.`);
+        activity(s.workspace, `Unlinked ${o.number} from customer ${digits} in Inbox`);
+      }
+      return;
+    }
     if (input.action === 'reply') {
       if (!input.text) throw new InputError('Message is required');
       for (const thread of customerThreads(s.workspace, c)) thread.human = true;
@@ -647,7 +960,16 @@ export async function subscribeMetaAccount(req: Request, res: Response): Promise
 export async function bulkOrders(req: Request, res: Response): Promise<void> {
   const input = z
     .object({
-      action: z.enum(['confirm', 'review', 'remove']),
+      action: z.enum([
+        'confirm',
+        'review',
+        'remove',
+        'mark_paid',
+        'mark_delivered',
+        'mark_in_progress',
+        'hold',
+        'release_hold',
+      ]),
       ids: z.array(z.string().uuid()).max(500).default([]),
       all: z.boolean().default(false),
       expectedCount: z.number().int().nonnegative().optional(),
@@ -659,18 +981,24 @@ export async function bulkOrders(req: Request, res: Response): Promise<void> {
   const result = await mutate(req.merchantId, (s) =>
     applyBulkOrderAction(s, input.action, input.ids, input.all, input.expectedCount),
   );
+  const actionLabel: Record<typeof input.action, string> = {
+    remove: 'removed from Relay',
+    confirm: 'confirmed; Shopify tags queued',
+    review: 'marked for review',
+    mark_paid: 'queued to mark paid in Shopify',
+    mark_delivered: 'queued to mark delivered in Shopify',
+    mark_in_progress: 'queued to mark in progress in Shopify',
+    hold: 'queued to place Relay hold in Shopify',
+    release_hold: 'queued to release Relay hold in Shopify',
+  };
   res.json({
     ok: true,
     ...result,
     message:
       result.affected +
       ' order(s) ' +
-      (input.action === 'remove'
-        ? 'removed from Relay'
-        : input.action === 'confirm'
-          ? 'confirmed; Shopify tags queued'
-          : 'marked for review') +
-      (result.skipped ? '; ' + result.skipped + ' already in that state' : ''),
+      actionLabel[input.action] +
+      (result.skipped ? '; ' + result.skipped + ' skipped or already in that state' : ''),
   });
 }
 export async function syncOrders(req: Request, res: Response): Promise<void> {
@@ -694,6 +1022,7 @@ export async function syncOrders(req: Request, res: Response): Promise<void> {
   );
   res.json({
     ok: true,
-    message: 'Shopify sync queued. Missing COD orders will be imported without duplicates.',
+    message:
+      'Shopify sync queued. Missing orders and fulfillment updates will synchronize without duplicates.',
   });
 }

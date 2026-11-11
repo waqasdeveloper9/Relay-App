@@ -19,7 +19,9 @@ export function Reports({ data, totals }: { data: Snapshot; totals: Record<strin
           <span className="eyebrow">DAILY OPERATIONS</span>
           <h2>Your day, without the noise.</h2>
           <p>
-            {report ? `${report.date} · ${report.timezone}` : error || 'Preparing your report…'}
+            {report
+              ? `${report.date} · ${report.timezone} · ${report.codOrders ?? 0} COD · ${report.nonCodOrders ?? 0} Prepaid`
+              : error || 'Preparing your report…'}
           </p>
         </div>
         <span className="report-illustration">
@@ -28,17 +30,42 @@ export function Reports({ data, totals }: { data: Snapshot; totals: Record<strin
       </div>
       <section className="stats-grid">
         {[
-          { title: 'Orders received today', value: report?.orders ?? '—', icon: ShoppingBag },
-          { title: 'Confirmed today', value: report?.confirmed ?? '—', icon: CircleCheck },
-          { title: 'Open requests · all time', value: report?.openRequests ?? '—', icon: Users },
-          { title: 'Failed / uncertain jobs', value: report?.failures ?? '—', icon: AlertCircle },
+          {
+            title: 'Orders received today',
+            value: report?.orders ?? '—',
+            detail: report
+              ? `${report.codOrders ?? 0} COD · ${report.nonCodOrders ?? 0} Prepaid`
+              : 'Recorded workspace events',
+            icon: ShoppingBag,
+          },
+          {
+            title: 'Confirmed COD today',
+            value: report?.codConfirmed ?? report?.confirmed ?? '—',
+            detail: report
+              ? `${report.pending ?? 0} awaiting · ${report.review ?? 0} review`
+              : 'Recorded workspace events',
+            icon: CircleCheck,
+          },
+          {
+            title: 'Open requests · all time',
+            value: report?.openRequests ?? '—',
+            detail: 'Address, cancel & support tasks',
+            icon: Users,
+          },
+          {
+            title: 'Failed / uncertain jobs',
+            value: report?.failures ?? '—',
+            detail: 'Check Reliability to recover',
+            icon: AlertCircle,
+          },
         ].map((s) => (
           <Stat
             key={s.title}
-            {...s}
+            title={s.title}
+            icon={s.icon}
             value={String(s.value)}
             color="violet"
-            detail="Recorded workspace events"
+            detail={s.detail}
             points="0,28 15,24 30,30 45,15 60,19 70,8"
           />
         ))}
@@ -47,8 +74,8 @@ export function Reports({ data, totals }: { data: Snapshot; totals: Record<strin
         <section className="panel">
           <div className="panel-heading">
             <div>
-              <h2>Confirmed order value</h2>
-              <p>All recorded orders, separated by currency. Not collected revenue.</p>
+              <h2>Confirmed COD order value</h2>
+              <p>COD orders only, separated by currency. Not collected revenue.</p>
             </div>
           </div>
           <div className="currency-list">
@@ -58,7 +85,7 @@ export function Reports({ data, totals }: { data: Snapshot; totals: Record<strin
                 <strong>{money(total, currency)}</strong>
               </div>
             ))}
-            {!Object.keys(totals).length && <p className="muted">No confirmed order value yet.</p>}
+            {!Object.keys(totals).length && <p className="muted">No confirmed COD value yet.</p>}
           </div>
         </section>
         <section className="panel">
@@ -70,8 +97,8 @@ export function Reports({ data, totals }: { data: Snapshot; totals: Record<strin
           </div>
           <div className="report-definitions">
             <p>
-              <strong>Confirmed</strong> means the order was confirmed; it does not prove successful
-              delivery.
+              <strong>Confirmed COD</strong> excludes prepaid / non-COD orders so COD confirmation
+              rates stay accurate; it does not prove successful delivery.
             </p>
             <p>
               <strong>Open requests</strong> include approved actions awaiting merchant

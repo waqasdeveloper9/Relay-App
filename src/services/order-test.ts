@@ -22,3 +22,17 @@ export function orderTestAllowed(store: Store, recipient: string): boolean {
       : /^[a-z]{2}(?:_[A-Z]{2})?$/.test(i.languageCode))
   );
 }
+
+export function dispatchTestAllowed(store: Store, recipient: string): boolean {
+  const i = store.workspace.integration;
+  const test = reliability(store.workspace).testMode;
+  return (
+    !config.demo &&
+    !!test &&
+    /^\d{10,15}$/.test(test.recipient) &&
+    recipient === test.recipient &&
+    Date.parse(test.until) > Date.now() &&
+    !!i.whatsappVerifiedAt &&
+    !!i.whatsappToken
+  );
+}

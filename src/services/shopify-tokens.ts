@@ -28,7 +28,7 @@ const tokenSchema = z
     'Expiring access tokens must include a refresh token',
   );
 export type ShopifyTokens = z.infer<typeof tokenSchema>;
-export function assertScopes(granted: string, required = config.shopifyScopes): void {
+export function assertScopes(granted: string, required = config.shopifyRequiredScopes): void {
   const scopes = granted.split(',').map((s) => s.trim());
   if (
     required.some(

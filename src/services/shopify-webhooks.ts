@@ -1,8 +1,43 @@
 import { z } from 'zod';
 import { shopifyGraphql, ProviderError } from './providers.js';
 import type { Integration } from '../models/types.js';
+import { hasShopifyScope } from '../models/workspace-defaults.js';
 
-export async function ensureShopifyWebhooks(integration: Integration, uri: string): Promise<void> {
+const CORE_TOPICS = [
+  'ORDERS_CREATE',
+  'ORDERS_UPDATED',
+  'ORDERS_CANCELLED',
+  'ORDERS_FULFILLED',
+  'ORDERS_PARTIALLY_FULFILLED',
+  'ORDERS_PAID',
+  'APP_UNINSTALLED',
+] as const;
+
+const FULFILLMENT_TOPICS = [
+  'FULFILLMENTS_CREATE',
+  'FULFILLMENTS_UPDATE',
+  'FULFILLMENT_EVENTS_CREATE',
+] as const;
+
+const FULFILLMENT_ORDER_TOPICS = [
+  'FULFILLMENT_ORDERS_PLACED_ON_HOLD',
+  'FULFILLMENT_ORDERS_HOLD_RELEASED',
+  'FULFILLMENT_ORDERS_PROGRESS_REPORTED',
+  'FULFILLMENT_ORDERS_MANUALLY_REPORTED_PROGRESS_STOPPED',
+] as const;
+
+export function desiredShopifyWebhookTopics(integration: Integration): string[] {
+  const topics: string[] = [...CORE_TOPICS];
+  if (hasShopifyScope(integration, 'read_fulfillments')) topics.push(...FULFILLMENT_TOPICS);
+  if (hasShopifyScope(integration, 'read_merchant_managed_fulfillment_orders'))
+    topics.push(...FULFILLMENT_ORDER_TOPICS);
+  return topics;
+}
+
+export async function ensureShopifyWebhooks(
+  integration: Integration,
+  uri: string,
+): Promise<string[]> {
   const existing = z
     .object({
       webhookSubscriptions: z.object({
@@ -20,7 +55,8 @@ export async function ensureShopifyWebhooks(integration: Integration, uri: strin
     throw new ProviderError(
       'Too many webhook subscriptions to reconcile automatically. Review them in Shopify.',
     );
-  for (const topic of ['ORDERS_CREATE', 'ORDERS_UPDATED', 'ORDERS_CANCELLED', 'APP_UNINSTALLED']) {
+  const desired = desiredShopifyWebhookTopics(integration);
+  for (const topic of desired) {
     if (existing.webhookSubscriptions.nodes.some((n) => n.topic === topic && n.uri === uri))
       continue;
     const stale = existing.webhookSubscriptions.nodes.filter(
@@ -66,4 +102,5 @@ export async function ensureShopifyWebhooks(integration: Integration, uri: strin
         );
     }
   }
+  return desired;
 }

@@ -6,34 +6,34 @@ Reduce routine merchant effort while keeping customer decisions, external action
 
 ## Core workflow
 
-1. Merchant registers a workspace and authorizes a Shopify store through Relay's shared Shopify application.
-2. Merchant connects their Meta sender, token, incoming webhook credentials, and an approved template. These settings belong to that workspace.
-3. Signed Shopify events enter a durable inbox. Reconciliation recovers missed orders using the same ingestion rules.
-4. Eligible COD orders create an initial confirmation job atomically. Existing jobs and message history prevent duplicate initial sends.
-5. Workers fill the selected approved template with order values and send through the saved merchant sender. Template approval happens before use, not for every order.
-6. Signed Meta callbacks record delivery events and customer decisions. Match tenant, sender, recipient, order payload, and message context before acting.
-7. Relay records the result and queues any Shopify action. Display external synchronization separately from the customer decision.
+1. Merchant registers a workspace and authorizes a Shopify store through Relay's shared Shopify application (`write_orders`, `read_legal_policies`, plus optional `write_fulfillments` and `write_merchant_managed_fulfillment_orders` when fulfillment creation, tracking updates, delivered events, holds, and courier webhooks are enabled).
+2. Merchant connects their Meta sender, token, incoming webhook credentials, confirmation template, and optional stage WhatsApp Utility templates (dispatch, delivery, paid, in progress, on hold) in tenant storage.
+3. Signed Shopify events enter a durable inbox (`orders/*` plus scope-gated `fulfillments/*`, `fulfillment_events/*`, `fulfillment_orders/*`). Reconciliation recovers missed orders using the same ingestion rules, and optional checkout consent rules (`syncCustomerSmsConsent`, `checkoutConsentAttributeKey`) record explicit opt-in consent without inferring permission from phone numbers alone.
+4. Eligible COD orders (detected from workspace-configurable `codGatewayKeywords`) create an initial confirmation job atomically. Imported prepaid/non-COD orders (`importNonCodOrders`) sync as `CONFIRMED` without queuing COD confirmations or counting toward COD totals, and non-pending financial states suppress/stop COD confirmation sends.
+5. Workers fill the selected approved templates with order/tracking values and send through the saved merchant sender. Template approval happens before use, not for every order.
+6. Signed Meta callbacks record delivery events, `STOP`/`START` opt-out preferences, Help menu selections, and customer decisions. Match tenant, sender, recipient, order payload, and message context before acting.
+7. Relay records the result, syncs Shopify payment & fulfillment/courier/tracking data bidirectionally (supporting merchant-triggered `mark_paid`, `mark_in_progress`, `reopen`, `hold`/`release_hold`, `fulfill`, `update_tracking`, and `mark_delivered` actions as well as daily routine/custom views), and queues tenant-configured Shopify tags or Relay-owned fulfillment holds (`handle: 'relay-hold'`). Display external synchronization separately from the customer decision.
 
 ## Decision semantics
 
-- Confirm: Relay confirms the order and queues `COD-CONFIRMED` tagging. Payment remains pending and fulfillment remains unchanged.
+- Confirm: Relay confirms the order and queues the workspace-configured confirmation tag (default `COD-CONFIRMED`) plus Relay-owned fulfillment hold release if enabled. Payment remains pending and fulfillment remains unchanged.
 - Cancel while awaiting a decision: request cancellation; verify current Shopify eligibility and completion before displaying Cancelled.
-- Cancel after confirmation: move to Needs review, save an open cancellation request, and hand over to a human. Do not automatically cancel Shopify. Queue removal of COD-CONFIRMED and addition of CANCELLATION-REQUESTED. Merchant approval with a reason queues guarded Shopify cancellation; only verified cancelledAt moves Relay to Cancelled. Tag cleanup is separately tracked and retryable.
+- Cancel after confirmation: move to Needs review, save an open cancellation request, and hand over to a human. Do not automatically cancel Shopify. Queue removal of the confirmation tag, addition of the cancellation-request tag (default `CANCELLATION-REQUESTED`), and optional Relay-owned fulfillment hold. Merchant approval with a reason queues guarded Shopify cancellation; only verified cancelledAt moves Relay to Cancelled. Tag cleanup is separately tracked and retryable.
 - Duplicate delivery of the same event must be harmless. A distinct changed decision must not be mistaken for the same webhook delivery.
 - Late, ambiguous, paid, fulfilled, or conflicting cases need explicit review according to the current policy. Do not reopen a cancelled order automatically.
 - Removing an order from Relay archives it and retains history/deduplication. Explicit restore may show it again without repeating completed sends. Shopify orders are not deleted.
 
 ## Messaging rules
 
-Phone collection alone is not messaging permission. Preserve recorded permission, opt-out, subscription, age, automation, sender readiness, and platform controls. An explicitly authorized sandbox recipient is a limited test exception, never general customer consent.
+Phone collection alone is not messaging permission. Preserve recorded permission, opt-out (`STOP` / `START` ledger), subscription, age, automation, sender readiness, and platform controls. An explicitly authorized sandbox recipient is a limited test exception, never general customer consent.
 
-The current confirmation adapter supports six positional body values: customer name, store name, order number, items/quantities, COD total, and delivery address; then Confirm and Cancel quick replies. Name and language are tenant settings. Additional template layouts require deliberate adapter support and validation.
+The current confirmation adapter supports six positional body values: customer name, store name, order number, items/quantities, COD total, and delivery address; then Confirm and Cancel quick replies. Stage notification Utility templates (Dispatch, Delivery, Paid, In progress, and On hold) map tenant-selected variables (`customer_name`, `brand_name`, `order_number`, `courier`, `tracking_number`, `tracking_url`, `total_amount`) to approved Meta placeholders without hardcoded layouts. Name and language are tenant settings.
 
 No phone means no WhatsApp send; record an actionable reason. Do not infer a WhatsApp number from email. Missing replies, unavailable callbacks, and provider acceptance must not be presented as customer confirmation.
 
 ## Current boundaries and next stages
 
-Implemented areas include tenant persistence, authentication, Shopify OAuth/intake/catch-up, message attempts, incoming Meta processing, guarded order actions, rule-based read-only WhatsApp support/policy auto-replies, manual live Inbox replies within Meta's 24-hour customer service window, review, and bulk/archive operations. Verify individual capabilities in code/tests before making claims.
+Implemented areas include tenant persistence, authentication, Shopify OAuth/intake/catch-up, bidirectional Shopify payment, fulfillment, tracking & hold operations, configurable tags and scope-gated Relay-owned fulfillment holds, daily-routine & saved custom order views, non-COD order import and explicit checkout opt-in sync, message attempts, incoming Meta processing, guarded order actions, customizable stage WhatsApp Utility alerts (dispatch, delivery, paid, in progress, on hold), configurable rule-based read-only WhatsApp support/policy auto-replies & Help menus, `STOP`/`START` opt-out ledger, manual live Inbox replies + editable Quick replies + order-thread linking within Meta's 24-hour customer service window, review, and bulk/archive operations. Verify individual capabilities in code/tests before making claims.
 
 Public SaaS work remains: production consent/onboarding, account recovery and email verification, team roles, billing, privacy lifecycle and Shopify distribution requirements, backup/recovery validation, and production worker deployment. Courier integrations, automatic refunds, and automated address edits must not be advertised as automated unless implemented and verified.
 

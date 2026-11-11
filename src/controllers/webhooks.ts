@@ -4,8 +4,11 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
 import { decrypt, verifyHmac } from '../utils/security.js';
 import { webhookShopTarget, webhookMetaTargets, getStore, mutate } from '../services/repository.js';
-import { metaPayload } from '../services/incoming-events.js';
-import { shopifyOrderSchema } from '../services/order-ingestion.js';
+import {
+  isSupportedShopifyTopic,
+  metaPayload,
+  validateShopifyWebhookPayload,
+} from '../services/incoming-events.js';
 import { acceptInbox, drainInbox } from '../services/inbox-worker.js';
 export async function shopify(req: Request, res: Response): Promise<void> {
   if (
@@ -31,12 +34,12 @@ export async function shopify(req: Request, res: Response): Promise<void> {
     res.status(404).json({ error: 'Store is not connected' });
     return;
   }
-  if (!['orders/create', 'orders/updated', 'orders/cancelled', 'app/uninstalled'].includes(topic)) {
+  if (!isSupportedShopifyTopic(topic)) {
     res.status(400).json({ error: 'Unsupported webhook topic' });
     return;
   }
   const payload = JSON.parse((req.body as Buffer).toString('utf8'));
-  if (topic !== 'app/uninstalled') shopifyOrderSchema.parse(payload);
+  validateShopifyWebhookPayload(topic, payload);
   await acceptInbox(merchantId, 'shopify', eventId, topic, payload);
   if (config.demo) await drainInbox();
   res.json({ ok: true });

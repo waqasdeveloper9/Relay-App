@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { decrypt } from '../utils/security.js';
 import type { Integration, Order } from '../models/types.js';
 import { ProviderError, request, shopifyGraphql, metaMessageId } from './providers.js';
+import { defaultShopifySync, isCodGateway } from '../models/workspace-defaults.js';
 
 export const confirmationTemplateName = 'relay_order_confirmation_v1';
 export const confirmationTemplateBody =
@@ -181,6 +182,7 @@ export async function cancelUnpaidCodOrder(
   i: Integration,
   order: Order,
   reason = 'Customer requested cancellation through Relay WhatsApp confirmation',
+  codKeywords: string[] = defaultShopifySync.codGatewayKeywords,
 ): Promise<void> {
   const current = await readShopOrder(i, order);
   if (!current) throw new ProviderError('Shopify order is unavailable');
@@ -189,7 +191,7 @@ export async function cancelUnpaidCodOrder(
     current.displayFinancialStatus !== 'PENDING' ||
     current.displayFulfillmentStatus !== 'UNFULFILLED' ||
     Number(current.totalReceivedSet.shopMoney.amount) !== 0 ||
-    !current.paymentGatewayNames.some((g) => /cash on delivery|\bcod\b/i.test(g))
+    !isCodGateway(current.paymentGatewayNames, codKeywords)
   )
     throw new ProviderError(
       'Automatic cancellation requires an unpaid, unfulfilled COD order. Manual review required.',

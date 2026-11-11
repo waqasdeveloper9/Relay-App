@@ -11,7 +11,14 @@ export function jobRetry(
   attempts: number,
 ): { retry: boolean; unknown: boolean; delay: number } {
   const ambiguous = error instanceof ProviderError && error.ambiguous;
-  const tagAction = ['TAG', 'CANCEL_TAGS', 'CANCEL_CLEANUP'].includes(kind);
+  const tagAction = [
+    'TAG',
+    'REVIEW_TAG',
+    'FULFILLMENT_HOLD',
+    'FULFILLMENT_RELEASE',
+    'CANCEL_TAGS',
+    'CANCEL_CLEANUP',
+  ].includes(kind);
   const safe = tagAction || !ambiguous;
   return {
     retry:

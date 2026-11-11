@@ -117,6 +117,7 @@ api.post('/orders/:id/queue-confirmation', workspace.queueOrderConfirmation);
 api.post('/orders/:id/permission', workspace.recordPermission);
 api.post('/messages/:id/retry', workspace.retryFailedMessage);
 api.post('/orders/:id/action', workspace.orderAction);
+api.post('/orders/:id/shopify-action', workspace.shopifyOrderAction);
 api.post('/demo/simulate', workspace.simulate);
 api.post('/integrations', workspace.saveIntegration);
 api.post('/integrations/test', workspace.testIntegration);
@@ -151,14 +152,22 @@ api.get('/reports', (req, res) => {
     day: '2-digit',
   });
   const target = date ?? formatter.format(new Date());
-  const orders = w.orders.filter((o) => formatter.format(new Date(o.createdAt)) === target);
+  const orders = w.orders.filter(
+    (o) => !o.archivedAt && formatter.format(new Date(o.createdAt)) === target,
+  );
+  const codOrders = orders.filter((o) => o.isCod !== false);
+  const nonCodOrders = orders.filter((o) => o.isCod === false);
+  const codConfirmed = codOrders.filter((o) => o.status === 'CONFIRMED').length;
   res.json({
     date: target,
     timezone: w.settings.timezone,
     orders: orders.length,
-    confirmed: orders.filter((o) => o.status === 'CONFIRMED').length,
-    pending: orders.filter((o) => o.status === 'PENDING').length,
-    review: orders.filter((o) => o.status === 'NEEDS_REVIEW').length,
+    codOrders: codOrders.length,
+    nonCodOrders: nonCodOrders.length,
+    confirmed: codConfirmed,
+    codConfirmed,
+    pending: codOrders.filter((o) => o.status === 'PENDING').length,
+    review: codOrders.filter((o) => o.status === 'NEEDS_REVIEW').length,
     openRequests: w.tasks.filter((t) => t.status !== 'VERIFIED').length,
     queued: w.jobs.filter((j) => j.state === 'QUEUED').length,
     failures: w.jobs.filter((j) => j.state === 'FAILED' || j.state === 'UNKNOWN').length,

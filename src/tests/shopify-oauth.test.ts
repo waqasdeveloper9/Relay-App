@@ -106,9 +106,11 @@ async function request(path: string, cookie = '', body?: unknown) {
 async function begin(
   owner: Awaited<ReturnType<typeof merchant>>,
   shop = `store-${randomUUID()}.myshopify.com`,
+  includeFulfillmentScopes = false,
 ) {
   const response = await request('/integrations/shopify/connect', owner.cookie, {
     shopDomain: shop,
+    ...(includeFulfillmentScopes ? { includeFulfillmentScopes: true } : {}),
   });
   assert.equal(response.status, 200);
   const body = await response.json();
@@ -265,13 +267,47 @@ test('webhook registration is tenant-scoped and idempotent', async () => {
   await request(callback(flow), flow.cookie);
   subscriptions.length = 0;
   assert.equal((await request('/integrations/shopify/webhooks', owner.cookie, {})).status, 200);
-  assert.equal(subscriptions.length, 4);
+  assert.equal(subscriptions.length, 7);
   assert.equal((await request('/integrations/shopify/webhooks', owner.cookie, {})).status, 200);
-  assert.equal(subscriptions.length, 4);
+  assert.equal(subscriptions.length, 7);
   assert.equal(
     (await getStore(owner.id))!.workspace.integration.shopifyWebhooksUrl,
     `${config.appUrl}/api/webhooks/shopify`,
   );
+});
+test('optional fulfillment scopes request and register extended webhook topics', async () => {
+  const owner = await merchant();
+  const flow = await begin(owner, undefined, true);
+  assert.equal(
+    flow.authorization.searchParams.get('scope'),
+    'write_orders,read_legal_policies,write_fulfillments,write_merchant_managed_fulfillment_orders',
+  );
+  grantedScope =
+    'write_orders,read_legal_policies,write_fulfillments,write_merchant_managed_fulfillment_orders';
+  try {
+    const cb = await request(callback(flow), flow.cookie);
+    assert.equal(cb.status, 303);
+    assert.match(cb.headers.get('location')!, /shopify=connected/);
+    const saved = (await getStore(owner.id))!.workspace.integration;
+    assert.deepEqual(saved.shopifyScopes, [
+      'write_orders',
+      'read_legal_policies',
+      'write_fulfillments',
+      'write_merchant_managed_fulfillment_orders',
+    ]);
+    subscriptions.length = 0;
+    const wh = await request('/integrations/shopify/webhooks', owner.cookie, {});
+    assert.equal(wh.status, 200);
+    assert.equal(subscriptions.length, 14);
+    assert.ok(subscriptions.some((s) => s.topic === 'FULFILLMENT_EVENTS_CREATE'));
+    assert.ok(subscriptions.some((s) => s.topic === 'FULFILLMENT_ORDERS_PLACED_ON_HOLD'));
+    assert.ok(subscriptions.some((s) => s.topic === 'FULFILLMENT_ORDERS_HOLD_RELEASED'));
+    // Second call remains idempotent with no duplicate subscriptions created.
+    assert.equal((await request('/integrations/shopify/webhooks', owner.cookie, {})).status, 200);
+    assert.equal(subscriptions.length, 14);
+  } finally {
+    grantedScope = 'write_orders,read_legal_policies';
+  }
 });
 test('manual tokens cannot bypass Shopify authorization in connected mode', async () => {
   const owner = await merchant();

@@ -1,8 +1,28 @@
-import type { Store } from '../models/types.js';
+import { config } from '../config.js';
+import type { ShopifyOrderAction, Store } from '../models/types.js';
+import { hasShopifyScope } from '../models/workspace-defaults.js';
 import { InputError } from '../utils/errors.js';
-import { activity, confirm } from './automation.js';
+import { activity, confirm, markForReview, queueShopifyOrderAction } from './automation.js';
 import { resolveNotification } from './notifications.js';
-export type BulkOrderAction = 'confirm' | 'review' | 'remove';
+
+export type BulkOrderAction =
+  | 'confirm'
+  | 'review'
+  | 'remove'
+  | 'mark_paid'
+  | 'mark_delivered'
+  | 'mark_in_progress'
+  | 'hold'
+  | 'release_hold';
+
+const bulkToShopifyAction: Partial<Record<BulkOrderAction, ShopifyOrderAction>> = {
+  mark_paid: 'mark_paid',
+  mark_delivered: 'mark_delivered',
+  mark_in_progress: 'mark_in_progress',
+  hold: 'hold',
+  release_hold: 'release_hold',
+};
+
 export function applyBulkOrderAction(
   s: Store,
   action: BulkOrderAction,
@@ -29,8 +49,24 @@ export function applyBulkOrderAction(
   if (orders.length > 500) throw new InputError('Process at most 500 orders per batch');
   if (action !== 'remove' && orders.some((o) => o.status === 'CANCELLED'))
     throw new InputError(
-      'Cancelled orders cannot be confirmed or marked for review. Remove them from the selection.',
+      'Cancelled orders cannot be updated in bulk. Remove them from the selection.',
     );
+  if (!config.demo) {
+    const int = s.workspace.integration;
+    if (action === 'mark_paid' && !hasShopifyScope(int, 'write_orders'))
+      throw new InputError('Shopify write_orders permission is required to mark orders paid');
+    if (action === 'mark_delivered' && !hasShopifyScope(int, 'write_fulfillments'))
+      throw new InputError(
+        'Shopify write_fulfillments permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    if (
+      (action === 'mark_in_progress' || action === 'hold' || action === 'release_hold') &&
+      !hasShopifyScope(int, 'write_merchant_managed_fulfillment_orders')
+    )
+      throw new InputError(
+        'Shopify fulfillment-order permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+  }
   if (
     action === 'remove' &&
     s.workspace.jobs.some(
@@ -43,7 +79,21 @@ export function applyBulkOrderAction(
   let affected = 0,
     skipped = 0;
   const now = new Date().toISOString();
+  const shopifyAction = bulkToShopifyAction[action];
   for (const o of orders) {
+    if (shopifyAction) {
+      try {
+        queueShopifyOrderAction(s.workspace, o, shopifyAction);
+      } catch (error) {
+        if (error instanceof InputError) {
+          skipped++;
+          continue;
+        }
+        throw error;
+      }
+      affected++;
+      continue;
+    }
     if (action === 'confirm') {
       if (o.status === 'CONFIRMED') {
         skipped++;
@@ -55,8 +105,7 @@ export function applyBulkOrderAction(
         skipped++;
         continue;
       }
-      o.status = 'NEEDS_REVIEW';
-      activity(s.workspace, o.number + ' marked for review by merchant');
+      markForReview(s.workspace, o, 'marked for review by merchant');
     } else {
       o.archivedAt = now;
       for (const j of s.workspace.jobs.filter((j) => j.orderId === o.id && j.state === 'QUEUED')) {

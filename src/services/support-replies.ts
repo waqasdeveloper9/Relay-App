@@ -3,6 +3,12 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { customerThreads } from '../models/customer-conversations.js';
 import type { Job, Order, Store, Workspace } from '../models/types.js';
+import {
+  formatSupportTemplate,
+  isPhoneOptedOut,
+  orderMatchesPhone,
+  supportSettings,
+} from '../models/workspace-defaults.js';
 import { activity, append, canSend, customerConversation } from './automation.js';
 import { orderTestAllowed } from './order-test.js';
 import { metaWebhookReady } from './meta-webhook-settings.js';
@@ -11,7 +17,6 @@ import { ProviderError, type SupportMenuButton, shopifyGraphql } from './provide
 import { freshShopifyIntegration } from './shopify-tokens.js';
 
 const windowMs = 24 * 60 * 60 * 1000;
-const menuCooldownMs = 12 * 60 * 60 * 1000;
 const menuExplicitDebounceMs = 60 * 1000;
 const prefix = 'SUPPORT_REPLY:';
 type Intent =
@@ -23,7 +28,9 @@ type Intent =
   | 'clarify'
   | 'no_order'
   | 'menu'
-  | 'handoff';
+  | 'handoff'
+  | 'optout'
+  | 'optin';
 
 export const isSupportReply = (kind: string): boolean => kind.startsWith(prefix);
 export const isPolicyIntent = (intent?: string): boolean =>
@@ -31,10 +38,11 @@ export const isPolicyIntent = (intent?: string): boolean =>
 export const isMenuIntent = (intent?: string): boolean => intent === 'menu';
 
 export function supportMenuButtons(settings: Workspace['settings']): SupportMenuButton[] {
+  const sup = supportSettings({ settings });
   const buttons: SupportMenuButton[] = [];
-  if (settings.tracking) buttons.push({ id: 'MENU:STATUS', title: 'Order status' });
-  if (settings.faqs) buttons.push({ id: 'MENU:POLICY', title: 'Store policies' });
-  buttons.push({ id: 'MENU:HUMAN', title: 'Talk to support' });
+  if (settings.tracking) buttons.push({ id: 'MENU:STATUS', title: sup.statusButtonTitle });
+  if (settings.faqs) buttons.push({ id: 'MENU:POLICY', title: sup.policyButtonTitle });
+  buttons.push({ id: 'MENU:HUMAN', title: sup.humanButtonTitle });
   return buttons;
 }
 
@@ -42,10 +50,11 @@ export function menuPromptDetails(
   brandName: string,
   settings: Workspace['settings'],
 ): { body: string; footer: string; buttons: SupportMenuButton[]; preview: string } {
+  const sup = supportSettings({ settings });
   const brand = brandName.trim() || 'our store';
   const buttons = supportMenuButtons(settings);
-  const body = `Hi! Thanks for messaging ${brand}. How can we help you today?`;
-  const footer = 'Tap an option below';
+  const body = formatSupportTemplate(sup.menuBody, { brand_name: brand }).slice(0, 1024);
+  const footer = sup.menuFooter.trim().slice(0, 60);
   const preview = `${body}\n[${buttons.map((b) => b.title).join('] [')}]`;
   return { body, footer, buttons, preview };
 }
@@ -142,6 +151,121 @@ export function policySummary(html?: string | null, max = 500): string {
   return (boundary > max * 0.5 ? cut.slice(0, boundary) : cut).trimEnd() + '…';
 }
 
+export function handleOptKeyword(
+  store: Store,
+  input: { from: string; body: string; timestamp?: string },
+  now = Date.now(),
+): boolean {
+  const { from, body, timestamp } = input;
+  const digits = from.replace(/\D/g, '');
+  if (!/^\d{10,15}$/.test(digits)) return false;
+  const w = store.workspace;
+  const sup = supportSettings(w);
+  const normalized = body.trim().toLowerCase();
+  const received = timestamp !== undefined ? Number(timestamp) * 1000 : now;
+  const insideWindow =
+    Number.isFinite(received) && received > now - windowMs && received <= now + 60_000;
+
+  if (sup.optOutKeywords.includes(normalized)) {
+    w.settings.support = {
+      ...sup,
+      optedOutPhones: [...new Set([...sup.optedOutPhones, digits])],
+    };
+    const matchingOrderIds = new Set(w.orders.filter((o) => o.phone === digits).map((o) => o.id));
+    for (const o of w.orders) {
+      if (o.phone === digits && o.status === 'PENDING') {
+        o.messageBlockedReason = 'Customer opted out of automated WhatsApp messages (STOP)';
+      }
+    }
+    for (const j of w.jobs) {
+      if (
+        j.state === 'QUEUED' &&
+        j.orderId &&
+        matchingOrderIds.has(j.orderId) &&
+        [
+          'CONFIRMATION',
+          'REMINDER',
+          'TEST_CONFIRMATION',
+          'TEST_HELLO',
+          'DISPATCH_NOTICE',
+          'DELIVERY_NOTICE',
+          'PAYMENT_NOTICE',
+          'IN_PROGRESS_NOTICE',
+          'ON_HOLD_NOTICE',
+        ].includes(j.kind)
+      ) {
+        j.state = 'FAILED';
+        j.retryable = false;
+        j.error = 'Cancelled after customer opted out via STOP keyword';
+      }
+    }
+    const c = customerConversation(w, digits);
+    const messageId = randomUUID();
+    c.messages.push({
+      id: messageId,
+      direction: 'in',
+      text: body,
+      createdAt: new Date(insideWindow ? Math.min(received, now) : now).toISOString(),
+    });
+    c.unread = true;
+    append(
+      c,
+      'note',
+      `Customer opted out via "${normalized}". Automated templates and bot replies are paused.`,
+    );
+    activity(w, `Customer ${digits} opted out of automated WhatsApp messages`);
+    if (insideWindow && canReply(store, digits)) {
+      w.jobs.push({
+        id: randomUUID(),
+        kind: `${prefix}optout:${messageId}:${w.integration.phoneNumberId}`,
+        state: 'QUEUED',
+        attempts: 0,
+        dueAt: new Date(now).toISOString(),
+      });
+    }
+    return true;
+  }
+
+  if (isPhoneOptedOut(w, digits) && sup.optInKeywords.includes(normalized)) {
+    w.settings.support = {
+      ...sup,
+      optedOutPhones: sup.optedOutPhones.filter((p) => p !== digits),
+    };
+    for (const o of w.orders) {
+      if (o.phone === digits && o.messageBlockedReason?.includes('opted out')) {
+        o.messageBlockedReason = undefined;
+      }
+    }
+    const c = customerConversation(w, digits);
+    const messageId = randomUUID();
+    c.messages.push({
+      id: messageId,
+      direction: 'in',
+      text: body,
+      createdAt: new Date(insideWindow ? Math.min(received, now) : now).toISOString(),
+    });
+    c.unread = true;
+    append(
+      c,
+      'note',
+      `Customer opted back in via "${normalized}". Automated WhatsApp notifications re-enabled.`,
+    );
+    activity(w, `Customer ${digits} opted back in to WhatsApp notifications`);
+    if (insideWindow && canReply(store, digits)) {
+      w.jobs.push({
+        id: randomUUID(),
+        kind: `${prefix}optin:${messageId}:${w.integration.phoneNumberId}`,
+        state: 'QUEUED',
+        attempts: 0,
+        dueAt: new Date(now).toISOString(),
+      });
+    }
+    return true;
+  }
+
+  return false;
+}
+
 export function queueSupportReply(
   store: Store,
   input: {
@@ -165,8 +289,9 @@ export function queueSupportReply(
   )
     return false;
   const w = store.workspace;
-  if (humanHandling(w, from)) return false;
+  if (isPhoneOptedOut(w, from) || humanHandling(w, from)) return false;
 
+  const sup = supportSettings(w);
   const question = body.toLowerCase().trim();
   const asksPolicyTerm = /\bpolic(?:y|ies)\b/.test(question);
 
@@ -227,7 +352,7 @@ export function queueSupportReply(
           j.kind.startsWith(prefix + 'clarify:') &&
           j.state === 'DONE' &&
           Date.parse(j.dueAt) > now - windowMs &&
-          (w.orders.some((o) => o.id === j.orderId && o.phone === from) ||
+          (w.orders.some((o) => o.id === j.orderId && orderMatchesPhone(o, from)) ||
             w.outboundMessages?.some((m) => m.jobId === j.id && m.recipient === from) ||
             w.conversations.some(
               (c) =>
@@ -253,7 +378,9 @@ export function queueSupportReply(
       if (!question || isCasualAck) return false;
       if (!w.settings.faqs && !w.settings.tracking) return false;
       const explicitMenuCmd = /^(?:menu|options|help)\b[!?.]*$/i.test(question);
-      const cooldown = explicitMenuCmd ? menuExplicitDebounceMs : menuCooldownMs;
+      const cooldown = explicitMenuCmd
+        ? menuExplicitDebounceMs
+        : Math.max(1, sup.menuCooldownHours) * 3600_000;
       if (menuSentRecently(w, from, now, cooldown)) return false;
       intent = 'menu';
     }
@@ -278,7 +405,7 @@ export function queueSupportReply(
   const quoted = allSent.find((m) => m.messageId === quotedId);
   if (!isButton && quotedId && !quoted) return false;
 
-  const orders = w.orders.filter((o) => o.phone === from && !o.archivedAt);
+  const orders = w.orders.filter((o) => orderMatchesPhone(o, from) && !o.archivedAt);
   const mentioned = [...question.matchAll(/#([a-z0-9-]+)|\border\s+([0-9][a-z0-9-]*)\b/g)].map(
     (match) => match[1] ?? match[2],
   );
@@ -331,6 +458,7 @@ export function queueSupportHandoff(
     received <= now - windowMs ||
     received > now + 60_000 ||
     !/^\d{10,15}$/.test(from) ||
+    isPhoneOptedOut(w, from) ||
     humanHandling(w, from) ||
     !canReply(store, from)
   )
@@ -396,13 +524,14 @@ export function supportReplyContext(store: Store, job: Job, order: Order | undef
         Date.parse(m.createdAt) >= Date.parse(inbound.createdAt),
     );
   const featureEnabled =
-    intent === 'handoff'
+    intent === 'handoff' || intent === 'optout' || intent === 'optin'
       ? true
       : intent === 'menu'
         ? store.workspace.settings.faqs || store.workspace.settings.tracking
         : policyIntent
           ? store.workspace.settings.faqs
           : store.workspace.settings.tracking;
+  const optBypass = intent === 'optout' || intent === 'optin';
   if (
     sender !== store.workspace.integration.phoneNumberId ||
     !featureEnabled ||
@@ -411,7 +540,8 @@ export function supportReplyContext(store: Store, job: Job, order: Order | undef
     !phone ||
     !inbound ||
     !canReply(store, phone) ||
-    (intent !== 'handoff' && humanHandling(store.workspace, phone)) ||
+    (!optBypass && intent !== 'handoff' && isPhoneOptedOut(store.workspace, phone)) ||
+    (!optBypass && intent !== 'handoff' && humanHandling(store.workspace, phone)) ||
     handoffAlreadyReplied ||
     Date.parse(inbound.createdAt) <= Date.now() - windowMs
   )
@@ -445,7 +575,11 @@ const orderResult = z.object({
         z.object({
           status: z.string(),
           trackingInfo: z.array(
-            z.object({ url: z.string().nullable(), number: z.string().nullable() }),
+            z.object({
+              url: z.string().nullish(),
+              number: z.string().nullish(),
+              company: z.string().nullish(),
+            }),
           ),
         }),
       ),
@@ -469,29 +603,34 @@ export async function supportReplyText(
   order?: Order,
   phone?: string,
 ): Promise<string> {
+  const sup = supportSettings(store.workspace);
+  const brand = store.merchant.brandName.trim() || 'our store';
+
   if (intent === 'menu')
     return menuPromptDetails(store.merchant.brandName, store.workspace.settings).preview;
 
-  if (intent === 'handoff') {
-    const brand = store.merchant.brandName.trim() || 'our store';
-    return `Thanks — a team member from ${brand} has been notified and will reply here shortly.`;
-  }
+  if (intent === 'handoff') return formatSupportTemplate(sup.handoffText, { brand_name: brand });
 
-  if (intent === 'no_order')
-    return 'We could not find an order linked to this WhatsApp number yet. Reply here if you used a different number or send "human" to reach our team.';
+  if (intent === 'no_order') return formatSupportTemplate(sup.noOrderText, { brand_name: brand });
+
+  if (intent === 'optout')
+    return formatSupportTemplate(sup.optOutConfirmationText, { brand_name: brand });
+
+  if (intent === 'optin')
+    return `Thanks — automated WhatsApp order notifications from ${brand} have been re-enabled for your number.`;
 
   if (intent === 'clarify') {
     const matches = phone
-      ? store.workspace.orders.filter((o) => o.phone === phone && !o.archivedAt)
+      ? store.workspace.orders.filter((o) => orderMatchesPhone(o, phone) && !o.archivedAt)
       : [];
-    if (matches.length >= 2) {
-      const recent = matches
-        .slice(0, 3)
-        .map((o) => o.number)
-        .join(', ');
-      return `Which order can we help with (${recent})? Please reply with the order number.`;
-    }
-    return 'Which order can we help with? Please reply with the order number from your confirmation.';
+    const recent =
+      matches.length >= 2
+        ? matches
+            .slice(0, 3)
+            .map((o) => o.number)
+            .join(', ')
+        : 'your confirmation message';
+    return formatSupportTemplate(sup.clarifyText, { orders: recent, brand_name: brand });
   }
 
   if (isPolicyIntent(intent)) {
@@ -546,34 +685,61 @@ export async function supportReplyText(
 
   if (!order)
     throw new ProviderError('An associated order is required for status and tracking replies');
-  const integration = await freshShopifyIntegration(store.merchant.id);
-  const { order: current } = orderResult.parse(
-    await shopifyGraphql(
-      integration,
-      'query SupportOrder($id:ID!){order(id:$id){cancelledAt displayFulfillmentStatus fulfillments(first:10){status trackingInfo(first:5){url number}}}}',
-      { id: 'gid://shopify/Order/' + order.shopifyOrderId },
-    ),
-  );
-  if (!current) throw new ProviderError('Shopify could not find the order for this support reply');
-  if (current.cancelledAt) return `Order ${order.number} has been cancelled.`;
-  const tracking = current.fulfillments
-    .filter((f) => f.status === 'SUCCESS')
-    .flatMap((f) => f.trackingInfo)
-    .map((info) => (info.url?.startsWith('https://') ? info.url : info.number))
-    .filter(Boolean);
-  const status = current.displayFulfillmentStatus;
+  let cancelled = order.status === 'CANCELLED';
+  let status = order.fulfillmentStatus ?? '';
+  const tracking: string[] = [];
+  if (store.workspace.integration.shopifyToken && store.workspace.integration.shopDomain) {
+    const integration = await freshShopifyIntegration(store.merchant.id);
+    const { order: current } = orderResult.parse(
+      await shopifyGraphql(
+        integration,
+        'query SupportOrder($id:ID!){order(id:$id){cancelledAt displayFulfillmentStatus fulfillments(first:10){status trackingInfo(first:5){url number}}}}',
+        { id: 'gid://shopify/Order/' + order.shopifyOrderId },
+      ),
+    );
+    if (!current)
+      throw new ProviderError('Shopify could not find the order for this support reply');
+    cancelled = !!current.cancelledAt;
+    status = current.displayFulfillmentStatus;
+    for (const info of current.fulfillments
+      .filter((f) => f.status === 'SUCCESS')
+      .flatMap((f) => f.trackingInfo)) {
+      const val = info.url?.startsWith('https://') ? info.url : info.number;
+      if (val) tracking.push(val);
+    }
+  }
+  if (!tracking.length && (order.trackingUrl || order.trackingNumber)) {
+    const fallback = order.trackingUrl?.startsWith('https://')
+      ? order.trackingUrl
+      : order.trackingNumber;
+    if (fallback) tracking.push(fallback);
+  }
+  if (cancelled) return `Order ${order.number} has been cancelled.`;
   const summary =
-    status === 'FULFILLED'
-      ? 'has been fulfilled'
-      : status === 'PARTIALLY_FULFILLED'
-        ? 'has been partially fulfilled'
-        : status === 'UNFULFILLED'
-          ? 'has not been fulfilled yet'
-          : `has fulfillment status: ${status.toLowerCase().replaceAll('_', ' ')}`;
+    order.delivery === 'Delivered'
+      ? 'has been delivered'
+      : status === 'FULFILLED'
+        ? 'has been fulfilled'
+        : status === 'PARTIALLY_FULFILLED' || order.delivery === 'Partially fulfilled'
+          ? 'has been partially fulfilled'
+          : status === 'ON_HOLD' || order.delivery === 'On hold'
+            ? 'is currently on hold'
+            : status === 'IN_PROGRESS' || order.delivery === 'In progress'
+              ? 'is currently being prepared for dispatch'
+              : status === 'SCHEDULED' || order.delivery === 'Scheduled'
+                ? 'has fulfillment scheduled'
+                : status === 'RESTOCKED' || order.delivery === 'Restocked'
+                  ? 'has been restocked'
+                  : status === 'UNFULFILLED' || order.delivery === 'Unfulfilled'
+                    ? 'has not been fulfilled yet'
+                    : status
+                      ? `has fulfillment status: ${status.toLowerCase().replaceAll('_', ' ')}`
+                      : `has status: ${order.delivery}`;
+  const courier = order.trackingCompany ? ` (${order.trackingCompany})` : '';
   return (
     `Order ${order.number} ${summary}.` +
     (tracking.length
-      ? ` Tracking: ${[...new Set(tracking)].slice(0, 3).join(', ')}`
+      ? ` Tracking${courier}: ${[...new Set(tracking)].slice(0, 3).join(', ')}`
       : intent === 'tracking'
         ? ' Tracking is not available yet.'
         : '')

@@ -33,6 +33,7 @@ export function publicOAuthConfig() {
     callbackUrl: `${url.origin}${callbackPath}`,
     webhookUrl: `${(config.webhookUrl || url.origin).replace(/\/$/, '')}/api/webhooks/shopify`,
     scopes: config.shopifyScopes,
+    fulfillmentScopes: config.shopifyFulfillmentScopes,
     reason: config.demo
       ? 'OAuth is unavailable in demo mode.'
       : !https
@@ -68,7 +69,9 @@ export async function beginOAuth(req: Request, res: Response): Promise<void> {
   const options = publicOAuthConfig();
   if (!options.configured)
     throw new InputError(options.reason ?? 'Shopify OAuth is not configured.');
-  const { shopDomain } = z.object({ shopDomain: shopDomainSchema }).parse(req.body);
+  const { shopDomain, includeFulfillmentScopes } = z
+    .object({ shopDomain: shopDomainSchema, includeFulfillmentScopes: z.boolean().optional() })
+    .parse(req.body);
   if (
     (await listStores()).some(
       (s) => s.merchant.id !== req.merchantId && s.workspace.integration.shopDomain === shopDomain,
@@ -92,10 +95,16 @@ export async function beginOAuth(req: Request, res: Response): Promise<void> {
     expiresAt: new Date(Date.now() + expiresMs),
   });
   res.cookie(nonceCookie, state, cookieOptions());
+  const requestedScopes = [
+    ...new Set([
+      ...config.shopifyScopes,
+      ...(includeFulfillmentScopes ? config.shopifyFulfillmentScopes : []),
+    ]),
+  ];
   const url = new URL(`https://${shopDomain}/admin/oauth/authorize`);
   url.search = new URLSearchParams({
     client_id: config.shopifyClientId,
-    scope: config.shopifyScopes.join(','),
+    scope: requestedScopes.join(','),
     redirect_uri: options.callbackUrl,
     state,
   }).toString();
@@ -201,13 +210,20 @@ export async function registerWebhooks(req: Request, res: Response): Promise<voi
     throw new InputError('A public HTTPS app URL and Relay credentials are required.');
   const integration = await freshShopifyIntegration(req.merchantId);
   const webhookUrl = publicOAuthConfig().webhookUrl;
-  await ensureShopifyWebhooks(integration, webhookUrl);
+  const topics = await ensureShopifyWebhooks(integration, webhookUrl);
   await mutate(req.merchantId, (s) => {
     if (s.workspace.integration.shopDomain !== integration.shopDomain)
       throw new InputError('Store connection changed. Try again.');
     s.workspace.integration.shopifyWebhooksVerifiedAt = new Date().toISOString();
     s.workspace.integration.shopifyWebhooksUrl = webhookUrl;
-    activity(s.workspace, 'Shopify order and uninstall webhooks verified');
+    activity(
+      s.workspace,
+      `Shopify webhooks verified (${topics.length} topic${topics.length === 1 ? '' : 's'})`,
+    );
   });
-  res.json({ ok: true, message: 'Order and uninstall webhooks are registered for this URL.' });
+  res.json({
+    ok: true,
+    topics,
+    message: `${topics.length} Shopify order, fulfillment, and uninstall webhooks are registered for this URL.`,
+  });
 }

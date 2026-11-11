@@ -71,10 +71,36 @@ export function demoWorkspace(): Workspace {
     amount: [4250, 2850, 6800, 3450, 1990, 5200][i % 6]!,
     currency: 'PKR',
     status: statuses[i]!,
+    isCod: i !== 9,
+    financialStatus: i === 5 || i === 9 ? 'paid' : 'pending',
+    paymentMethod: i === 9 ? 'Prepaid / Card' : 'Cash on delivery',
     createdAt: new Date(Date.now() - i * 43 * 60_000).toISOString(),
-    delivery: i === 5 ? 'Delivered' : i === 3 || i === 7 ? 'In transit' : 'Unfulfilled',
+    delivery:
+      i === 5
+        ? 'Delivered'
+        : i === 3 || i === 7
+          ? 'In transit'
+          : i === 2
+            ? 'On hold'
+            : i === 11
+              ? 'In progress'
+              : 'Unfulfilled',
+    fulfillmentStatus:
+      i === 5
+        ? 'DELIVERED'
+        : i === 3 || i === 7
+          ? 'FULFILLED'
+          : i === 2
+            ? 'ON_HOLD'
+            : i === 11
+              ? 'IN_PROGRESS'
+              : 'UNFULFILLED',
+    trackingCompany: i === 5 || i === 3 || i === 7 ? 'TCS Express' : undefined,
+    trackingNumber: i === 5 || i === 3 || i === 7 ? `PK-${48120 + i}` : undefined,
+    trackingUrl:
+      i === 5 || i === 3 || i === 7 ? `https://track.example/PK-${48120 + i}` : undefined,
     consent: true,
-    tags: statuses[i] === 'CONFIRMED' ? ['COD-CONFIRMED'] : [],
+    tags: statuses[i] === 'CONFIRMED' && i !== 9 ? ['COD-CONFIRMED'] : [],
   }));
   w.conversations = w.orders.slice(0, 7).map((o, i) => ({
     id: randomUUID(),

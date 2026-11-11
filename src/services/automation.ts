@@ -1,8 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import type { Conversation, Job, Order, Store, Workspace } from '../models/types.js';
+import { config } from '../config.js';
+import type {
+  Conversation,
+  Job,
+  Order,
+  OrderActionPayload,
+  ShopifyOrderAction,
+  Store,
+  Workspace,
+} from '../models/types.js';
 import { reliability } from './reliability-settings.js';
 import { notify } from './notifications.js';
 import { InputError } from '../utils/errors.js';
+import { hasShopifyScope, shopifySyncSettings } from '../models/workspace-defaults.js';
 
 export function activity(w: Workspace, text: string): void {
   w.activity.unshift({ id: randomUUID(), text, createdAt: new Date().toISOString() });
@@ -15,7 +25,13 @@ export function canSend(store: Store): boolean {
       Date.parse(store.merchant.trialEndsAt) > Date.now())
   );
 }
-export function enqueue(w: Workspace, order: Order, kind: Job['kind'], delay = 0): void {
+export function enqueue(
+  w: Workspace,
+  order: Order,
+  kind: Job['kind'],
+  delay = 0,
+  payload?: OrderActionPayload,
+): void {
   if (w.jobs.some((j) => j.orderId === order.id && j.kind === kind)) return;
   w.jobs.push({
     id: randomUUID(),
@@ -24,7 +40,228 @@ export function enqueue(w: Workspace, order: Order, kind: Job['kind'], delay = 0
     state: 'QUEUED',
     attempts: 0,
     dueAt: new Date(Date.now() + delay).toISOString(),
+    ...(payload ? { payload } : {}),
   });
+}
+
+type RequeueableJobKind =
+  | 'TAG'
+  | 'REVIEW_TAG'
+  | 'FULFILLMENT_HOLD'
+  | 'FULFILLMENT_RELEASE'
+  | 'MARK_PAID'
+  | 'MARK_IN_PROGRESS'
+  | 'MARK_OPEN'
+  | 'FULFILL_ORDER'
+  | 'UPDATE_TRACKING'
+  | 'MARK_DELIVERED';
+
+// Re-queue completed/failed Shopify state-sync jobs across reversible order lifecycle transitions
+// (e.g. unconfirmed hold -> confirmed release -> post-confirm cancel re-hold) without violating
+// the unique (merchantId, orderId, kind) DB constraint or ever re-queuing messaging/UNKNOWN jobs.
+export function requeue(
+  w: Workspace,
+  order: Order,
+  kind: RequeueableJobKind,
+  delay = 0,
+  payload?: OrderActionPayload,
+): void {
+  const existing = w.jobs.find((j) => j.orderId === order.id && j.kind === kind);
+  if (!existing) {
+    enqueue(w, order, kind, delay, payload);
+    return;
+  }
+  if (existing.state === 'DONE' || existing.state === 'FAILED') {
+    existing.state = 'QUEUED';
+    existing.attempts = 0;
+    existing.error = undefined;
+    existing.claimedAt = undefined;
+    existing.retryable = false;
+    existing.dueAt = new Date(Date.now() + delay).toISOString();
+    existing.payload = payload;
+  }
+}
+
+const actionToJobKind: Record<ShopifyOrderAction, RequeueableJobKind> = {
+  mark_paid: 'MARK_PAID',
+  mark_in_progress: 'MARK_IN_PROGRESS',
+  reopen: 'MARK_OPEN',
+  hold: 'FULFILLMENT_HOLD',
+  release_hold: 'FULFILLMENT_RELEASE',
+  fulfill: 'FULFILL_ORDER',
+  update_tracking: 'UPDATE_TRACKING',
+  mark_delivered: 'MARK_DELIVERED',
+};
+
+export function checkShopifyActionEligibility(
+  w: Workspace,
+  order: Order,
+  action: ShopifyOrderAction,
+  payload?: OrderActionPayload,
+): void {
+  if (order.archivedAt) throw new InputError('Restore this removed order before updating Shopify');
+  if (order.status === 'CANCELLED')
+    throw new InputError('Cancelled orders cannot run payment or fulfillment actions');
+
+  const kind = actionToJobKind[action];
+  if (
+    w.jobs.some(
+      (j) => j.orderId === order.id && j.kind === kind && ['QUEUED', 'UNKNOWN'].includes(j.state),
+    )
+  ) {
+    throw new InputError(
+      'This Shopify action is already queued or awaiting confirmation for this order.',
+    );
+  }
+
+  const fin = (order.financialStatus ?? 'pending').toLowerCase();
+  if (action === 'mark_paid') {
+    if (fin === 'paid') throw new InputError('This order is already marked paid');
+    if (!['pending', 'authorized', 'partially_paid'].includes(fin))
+      throw new InputError('Only payment-pending or partially paid orders can be marked paid');
+    if (!config.demo && !hasShopifyScope(w.integration, 'write_orders'))
+      throw new InputError('Shopify write_orders permission is required to mark orders paid');
+    return;
+  }
+
+  if (action === 'mark_in_progress') {
+    if (order.delivery === 'On hold')
+      throw new InputError('Release the fulfillment hold before marking this order in progress');
+    if (!['Unfulfilled', 'Scheduled'].includes(order.delivery))
+      throw new InputError('Only Unfulfilled or Scheduled orders can be marked In progress');
+    if (
+      !config.demo &&
+      !hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+    )
+      throw new InputError(
+        'Shopify fulfillment-order permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    return;
+  }
+
+  if (action === 'reopen') {
+    if (!['In progress', 'Scheduled'].includes(order.delivery))
+      throw new InputError('Only In progress or Scheduled orders can be reopened to Unfulfilled');
+    if (
+      !config.demo &&
+      !hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+    )
+      throw new InputError(
+        'Shopify fulfillment-order permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    return;
+  }
+
+  if (action === 'hold') {
+    if (!['Unfulfilled', 'In progress', 'Scheduled'].includes(order.delivery))
+      throw new InputError(
+        'Only Unfulfilled, In progress, or Scheduled orders can be placed on hold',
+      );
+    if (
+      !config.demo &&
+      !hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+    )
+      throw new InputError(
+        'Shopify fulfillment-order permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    return;
+  }
+
+  if (action === 'release_hold') {
+    if (order.delivery !== 'On hold') throw new InputError('This order is not currently on hold');
+    if (
+      !config.demo &&
+      !hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+    )
+      throw new InputError(
+        'Shopify fulfillment-order permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    return;
+  }
+
+  if (action === 'fulfill') {
+    if (order.delivery === 'On hold')
+      throw new InputError('Release the fulfillment hold before fulfilling this order');
+    if (
+      !['Unfulfilled', 'In progress', 'Scheduled', 'Partially fulfilled'].includes(order.delivery)
+    )
+      throw new InputError('No unfulfilled items remain on this order');
+    if (
+      !config.demo &&
+      (!hasShopifyScope(w.integration, 'write_fulfillments') ||
+        !hasShopifyScope(w.integration, 'read_merchant_managed_fulfillment_orders'))
+    )
+      throw new InputError(
+        'Shopify fulfillment write permissions are missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    return;
+  }
+
+  if (action === 'update_tracking') {
+    if (!['In transit', 'Partially fulfilled', 'Delivered'].includes(order.delivery))
+      throw new InputError('Fulfill the order before updating tracking details');
+    if (!payload?.trackingCompany && !payload?.trackingNumber && !payload?.trackingUrl)
+      throw new InputError('Enter a courier, tracking number, or tracking URL');
+    if (!config.demo && !hasShopifyScope(w.integration, 'write_fulfillments'))
+      throw new InputError(
+        'Shopify write_fulfillments permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+    return;
+  }
+
+  if (action === 'mark_delivered') {
+    if (!['In transit', 'Partially fulfilled'].includes(order.delivery))
+      throw new InputError('Only fulfilled orders in transit can be marked Delivered');
+    if (!config.demo && !hasShopifyScope(w.integration, 'write_fulfillments'))
+      throw new InputError(
+        'Shopify write_fulfillments permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',
+      );
+  }
+}
+
+export function queueShopifyOrderAction(
+  w: Workspace,
+  order: Order,
+  action: ShopifyOrderAction,
+  payload?: OrderActionPayload,
+): { jobKind: RequeueableJobKind; message: string } {
+  checkShopifyActionEligibility(w, order, action, payload);
+  const kind = actionToJobKind[action];
+  const cleanPayload: OrderActionPayload | undefined = payload
+    ? {
+        ...(payload.trackingCompany?.trim()
+          ? { trackingCompany: payload.trackingCompany.trim() }
+          : {}),
+        ...(payload.trackingNumber?.trim()
+          ? { trackingNumber: payload.trackingNumber.trim() }
+          : {}),
+        ...(payload.trackingUrl?.trim() ? { trackingUrl: payload.trackingUrl.trim() } : {}),
+        ...(payload.notifyCustomer !== undefined ? { notifyCustomer: payload.notifyCustomer } : {}),
+        ...(payload.reasonNotes?.trim() ? { reasonNotes: payload.reasonNotes.trim() } : {}),
+      }
+    : undefined;
+  requeue(
+    w,
+    order,
+    kind,
+    0,
+    cleanPayload && Object.keys(cleanPayload).length ? cleanPayload : undefined,
+  );
+  const labels: Record<ShopifyOrderAction, string> = {
+    mark_paid: 'Mark paid',
+    mark_in_progress: 'Mark in progress',
+    reopen: 'Reopen fulfillment',
+    hold: 'Place fulfillment hold',
+    release_hold: 'Release Relay fulfillment hold',
+    fulfill: 'Fulfill order',
+    update_tracking: 'Update fulfillment tracking',
+    mark_delivered: 'Mark delivered',
+  };
+  activity(w, `Queued Shopify ${labels[action]} for ${order.number}`);
+  return {
+    jobKind: kind,
+    message: `${labels[action]} queued for ${order.number} in Shopify.`,
+  };
 }
 export function conversation(w: Workspace, order: Order): Conversation {
   let c = w.conversations.find((c) => c.orderId === order.id);
@@ -48,8 +285,28 @@ export function confirm(w: Workspace, order: Order): void {
     throw new InputError('Resolve the cancellation request before confirming this order');
   if (order.status === 'CONFIRMED') return;
   order.status = 'CONFIRMED';
-  enqueue(w, order, 'TAG');
+  requeue(w, order, 'TAG');
+  if (
+    shopifySyncSettings(w).releaseHoldOnConfirm &&
+    hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+  )
+    requeue(w, order, 'FULFILLMENT_RELEASE');
   activity(w, `${order.name} confirmed order ${order.number}`);
+}
+
+export function markForReview(w: Workspace, order: Order, reason = 'moved to review'): void {
+  if (order.archivedAt) throw new InputError('Restore this removed order before updating it');
+  if (order.status === 'CANCELLED')
+    throw new InputError('A cancelled order cannot be moved to review');
+  order.status = 'NEEDS_REVIEW';
+  const sync = shopifySyncSettings(w);
+  if (sync.tagOnReview) requeue(w, order, 'REVIEW_TAG');
+  if (
+    sync.holdOnReview &&
+    hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+  )
+    requeue(w, order, 'FULFILLMENT_HOLD');
+  activity(w, `${order.number} ${reason}`);
 }
 
 export function handleOrderDecision(
@@ -79,6 +336,12 @@ export function handleOrderDecision(
       });
     }
     enqueue(w, order, 'CANCEL_TAGS');
+    const sync = shopifySyncSettings(w);
+    if (
+      sync.holdOnCancellationRequest &&
+      hasShopifyScope(w.integration, 'write_merchant_managed_fulfillment_orders')
+    )
+      requeue(w, order, 'FULFILLMENT_HOLD');
     notify(
       w,
       'decision:' + order.id,
@@ -129,7 +392,7 @@ export function handleOrderDecision(
     append(
       c,
       'note',
-      'Customer confirmed. Shopify COD-CONFIRMED tag synchronization queued. No payment or fulfillment performed.',
+      `Customer confirmed. Shopify ${shopifySyncSettings(w).confirmedTag} tag synchronization queued. No payment or fulfillment performed.`,
     );
   } else {
     order.status = 'NEEDS_REVIEW';

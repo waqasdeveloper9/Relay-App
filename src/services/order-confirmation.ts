@@ -55,23 +55,50 @@ export async function validateConfirmationTemplate(i: Integration): Promise<stri
       ),
     })
     .parse(raw).data;
-  const template = templates.find(
-    (t) => t.name === i.templateName && t.language === i.languageCode && t.status === 'APPROVED',
-  );
-  const body = template?.components.find((c) => c.type === 'BODY')?.text ?? '';
-  const buttons = template?.components.find((c) => c.type === 'BUTTONS')?.buttons ?? [];
-  if (
-    !template ||
-    template.components.some((c) => !['BODY', 'FOOTER', 'BUTTONS'].includes(c.type)) ||
-    [...body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1]).join(',') !== '1,2,3,4,5,6' ||
-    buttons.length !== 2 ||
-    buttons.some((b) => b.type !== 'QUICK_REPLY') ||
-    buttons[0]?.text !== 'Confirm order' ||
-    buttons[1]?.text !== 'Cancel order'
-  )
+  const matching = templates.filter((t) => t.name === i.templateName);
+  if (!matching.length) {
     throw new ProviderError(
-      'Template must be approved with six ordered body variables and quick replies: Confirm order, Cancel order. No header components.',
+      `Template "${i.templateName}" was not found in your Meta WhatsApp account (WABA ${i.wabaId}). Create and submit it in Meta WhatsApp Manager, or enter your approved template name in Integrations.`,
     );
+  }
+  const matchingLang = matching.find((t) => t.language === i.languageCode);
+  if (!matchingLang) {
+    const available = matching.map((t) => t.language).join(', ');
+    throw new ProviderError(
+      `Template "${i.templateName}" is registered on Meta in language [${available}], but Relay is configured with "${i.languageCode}". Update the language in Integrations.`,
+    );
+  }
+  if (matchingLang.status !== 'APPROVED') {
+    throw new ProviderError(
+      `Template "${i.templateName}" status is "${matchingLang.status}" on Meta (must be approved before sending).`,
+    );
+  }
+  const template = matchingLang;
+  const body = template.components.find((c) => c.type === 'BODY')?.text ?? '';
+  const buttons = template.components.find((c) => c.type === 'BUTTONS')?.buttons ?? [];
+  if (template.components.some((c) => !['BODY', 'FOOTER', 'BUTTONS'].includes(c.type))) {
+    throw new ProviderError(
+      `Template "${i.templateName}" contains unsupported components (e.g. HEADER). Confirmation template must have only Body and Buttons.`,
+    );
+  }
+  const vars = [...body.matchAll(/\{\{(\d+)\}\}/g)].map((m) => m[1]).join(',');
+  if (vars !== '1,2,3,4,5,6') {
+    throw new ProviderError(
+      `Template "${i.templateName}" body must have exactly 6 sequential variables {{1}} to {{6}}. Found: ${vars ? `{{${vars.split(',').join('}}, {{')}}}` : 'none'}.`,
+    );
+  }
+  if (buttons.length !== 2 || buttons.some((b) => b.type !== 'QUICK_REPLY')) {
+    throw new ProviderError(
+      `Template "${i.templateName}" has ${buttons.length} buttons. It must have exactly 2 Quick Reply buttons: Confirm order and Cancel order.`,
+    );
+  }
+  const b0 = buttons[0]?.text?.trim().toLowerCase();
+  const b1 = buttons[1]?.text?.trim().toLowerCase();
+  if (b0 !== 'confirm order' || b1 !== 'cancel order') {
+    throw new ProviderError(
+      `Template "${i.templateName}" buttons must be "Confirm order" and "Cancel order" (found "${buttons[0]?.text ?? ''}" and "${buttons[1]?.text ?? ''}").`,
+    );
+  }
   return body;
 }
 const money = z.object({ shopMoney: z.object({ amount: z.string(), currencyCode: z.string() }) });

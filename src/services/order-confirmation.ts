@@ -24,7 +24,9 @@ export function parseOrderButton(
   if (!timingSafeEqual(Buffer.from(expected), Buffer.from(match[3]!))) return;
   return { action: match[1] as 'CONFIRM' | 'CANCEL', orderId: match[2]! };
 }
-export async function validateConfirmationTemplate(i: Integration): Promise<string> {
+export async function validateConfirmationTemplate(
+  i: Integration,
+): Promise<{ body: string; language: string }> {
   if (
     !/^[a-z0-9_]{1,100}$/.test(i.templateName) ||
     !/^[a-z]{2}(?:_[A-Z]{2})?$/.test(i.languageCode) ||
@@ -61,7 +63,13 @@ export async function validateConfirmationTemplate(i: Integration): Promise<stri
       `Template "${i.templateName}" was not found in your Meta WhatsApp account (WABA ${i.wabaId}). Create and submit it in Meta WhatsApp Manager, or enter your approved template name in Integrations.`,
     );
   }
-  const matchingLang = matching.find((t) => t.language === i.languageCode);
+  const matchingLang =
+    matching.find((t) => t.language === i.languageCode) ??
+    (i.languageCode.startsWith('en')
+      ? matching.find(
+          (t) => t.language === 'en' || t.language === 'en_US' || t.language.startsWith('en'),
+        )
+      : undefined);
   if (!matchingLang) {
     const available = matching.map((t) => t.language).join(', ');
     throw new ProviderError(
@@ -99,7 +107,7 @@ export async function validateConfirmationTemplate(i: Integration): Promise<stri
       `Template "${i.templateName}" buttons must be "Confirm order" and "Cancel order" (found "${buttons[0]?.text ?? ''}" and "${buttons[1]?.text ?? ''}").`,
     );
   }
-  return body;
+  return { body, language: template.language };
 }
 const money = z.object({ shopMoney: z.object({ amount: z.string(), currencyCode: z.string() }) });
 const shopOrder = z.object({
@@ -144,7 +152,8 @@ export async function sendOrderConfirmation(
   onPrepared?: (preview: string) => Promise<void>,
   correlationId?: string,
 ): Promise<string> {
-  const templateBody = await validateConfirmationTemplate(i);
+  const { body: templateBody, language: templateLanguage } =
+    await validateConfirmationTemplate(i);
   const current = await readShopOrder(i, order);
   if (
     !current ||
@@ -188,7 +197,7 @@ export async function sendOrderConfirmation(
         type: 'template',
         template: {
           name: i.templateName,
-          language: { code: i.languageCode },
+          language: { code: templateLanguage },
           components: [
             { type: 'body', parameters: values.map((value) => ({ type: 'text', text: value })) },
             ...(['CONFIRM', 'CANCEL'] as const).map((action, index) => ({

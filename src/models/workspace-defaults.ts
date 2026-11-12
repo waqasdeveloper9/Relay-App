@@ -23,6 +23,7 @@ export const defaultShopifySync: ShopifySyncSettings = {
   syncCustomerSmsConsent: true,
   checkoutConsentAttributeKey: 'whatsapp_opt_in',
   checkoutConsentValues: ['yes', 'true', '1', 'opt_in', 'subscribed'],
+  requireExplicitConsent: false,
 };
 
 export const defaultDispatchNotifications: DispatchNotificationSettings = {
@@ -109,6 +110,7 @@ export function shopifySyncSettings(w: SettingsCarrier) {
     checkoutConsentValues: s?.checkoutConsentValues?.length
       ? s.checkoutConsentValues.map((k) => k.trim().toLowerCase()).filter(Boolean)
       : defaultShopifySync.checkoutConsentValues!,
+    requireExplicitConsent: s?.requireExplicitConsent ?? defaultShopifySync.requireExplicitConsent!,
   };
 }
 

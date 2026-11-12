@@ -232,7 +232,8 @@ export function planOrderMessage(s: Store, o: Order, recovered = false): void {
       'Incoming WhatsApp replies are not configured. Save the Meta App Secret and verify the merchant callback in Integrations.';
   else if (!w.settings.confirmations) reason = 'Order-confirmation automation is paused';
   else if (!canSend(s)) reason = 'Trial expired or subscription inactive';
-  else if (!o.consent) reason = 'Customer messaging permission has not been recorded';
+  else if (shopifySyncSettings(w).requireExplicitConsent && !o.consent)
+    reason = 'Customer messaging permission has not been recorded';
   else if (!config.outbound) reason = 'Production outbound messaging is disabled by the platform';
   else {
     enqueue(w, o, 'CONFIRMATION');
@@ -283,9 +284,10 @@ export function planDispatchNotification(
     kinds.push('DELIVERY_NOTICE');
   if (!kinds.length) return;
 
+  const explicitConsent = shopifySyncSettings(w).requireExplicitConsent;
   const allowed =
     dispatchTestAllowed(s, o.phone) ||
-    (o.consent && canSend(s) && (config.demo || config.outbound));
+    ((!explicitConsent || o.consent) && canSend(s) && (config.demo || config.outbound));
   if (!allowed) return;
 
   for (const kind of kinds) {

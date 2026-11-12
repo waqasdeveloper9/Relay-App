@@ -427,7 +427,8 @@ export async function tick(): Promise<void> {
           if (order.status === 'CANCELLED') throw new Error('Cancelled orders do not send notices');
           if (!dispatchTestAllowed(claimed, order.phone)) {
             if (!canSend(claimed)) throw new Error('Trial expired or subscription inactive');
-            if (!order.consent) throw new Error('Messaging permission is not recorded');
+            if (shopifySyncSettings(claimed.workspace).requireExplicitConsent && !order.consent)
+              throw new Error('Messaging permission is not recorded');
           }
           if (!noticeMeta.enabled) throw new Error(noticeMeta.disabledReason);
           if (!noticeMeta.eligible(order)) throw new Error(noticeMeta.ineligibleReason);
@@ -438,7 +439,8 @@ export async function tick(): Promise<void> {
           if (!canSend(claimed)) throw new Error('Trial expired or subscription inactive');
           if (claimed.workspace.conversations.some((c) => c.orderId === order.id && c.human))
             throw new Error('Assistant paused for human handling');
-          if (!order.consent) throw new Error('Messaging permission is not recorded');
+          if (shopifySyncSettings(claimed.workspace).requireExplicitConsent && !order.consent)
+            throw new Error('Messaging permission is not recorded');
           if (order.status !== 'PENDING') throw new Error('Order no longer requires confirmation');
           if (
             !claimed.workspace.settings.confirmations ||

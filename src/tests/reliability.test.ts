@@ -23,6 +23,7 @@ import {
 } from '../services/order-ingestion.js';
 import { config } from '../config.js';
 import { defaultReliability } from '../services/reliability-settings.js';
+import { defaultShopifySync } from '../models/workspace-defaults.js';
 import { reconcileMerchant } from '../services/shopify-reconciliation.js';
 import { jobRetry } from '../services/retry-policy.js';
 import { ProviderError } from '../services/providers.js';
@@ -512,6 +513,7 @@ test('recovered eligible orders queue a missing confirmation exactly once and re
   const s = fixture();
   s.workspace.settings.confirmations = true;
   s.workspace.settings.reliability = { ...defaultReliability, recoveryMessaging: 'SEND_ELIGIBLE' };
+  s.workspace.settings.shopifySync = { ...defaultShopifySync, requireExplicitConsent: true };
   const o = ingestOrder(s, incoming('206'), true)!;
   assert.match(o.messageBlockedReason!, /permission/);
   o.consent = true;
@@ -981,6 +983,9 @@ test('interactive 3-button help menu, cooldown, menu button clicks, and handoff 
     );
 
     // Synced COD order (no prior confirmation template sent) + clicking Order status returns live Shopify tracking
+    await mutate(s.merchant.id, (st) => {
+      st.workspace.settings.confirmations = false;
+    });
     await processShopifyEvent(s.merchant.id, 'orders/create', 'sh-order-500', incoming('500'));
     await processMetaEvent(
       s.merchant.id,

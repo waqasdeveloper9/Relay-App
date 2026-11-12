@@ -39,7 +39,7 @@ import {
   requestFullSync,
   retryInbox,
 } from '../services/reliability-repository.js';
-import { planOrderMessage } from '../services/order-ingestion.js';
+import { planOrderMessage, repairMissingConfirmations } from '../services/order-ingestion.js';
 import { validateConfirmationTemplate } from '../services/order-confirmation.js';
 import { dispatchSettings } from '../models/workspace-defaults.js';
 import { reconcileMerchant } from '../services/shopify-reconciliation.js';
@@ -462,6 +462,7 @@ export async function saveSettings(req: Request, res: Response): Promise<void> {
           syncCustomerSmsConsent: z.boolean().optional(),
           checkoutConsentAttributeKey: z.string().trim().max(60).optional(),
           checkoutConsentValues: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+          requireExplicitConsent: z.boolean().optional(),
         })
         .optional(),
       dispatchNotifications: z
@@ -612,6 +613,7 @@ export async function saveSettings(req: Request, res: Response): Promise<void> {
           }
         : {}),
     });
+    repairMissingConfirmations(s);
     activity(s.workspace, 'Workspace preferences updated');
   });
   res.json({ ok: true });
@@ -1018,15 +1020,16 @@ export async function syncOrders(req: Request, res: Response): Promise<void> {
     throw new InputError('Connect Shopify before synchronizing orders');
   await requestFullSync(req.merchantId, input.lookbackDays, input.restoreRemoved);
   void reconcileMerchant(req.merchantId).catch(() => {});
-  await mutate(req.merchantId, (s) =>
+  await mutate(req.merchantId, (s) => {
+    repairMissingConfirmations(s);
     activity(
       s.workspace,
       'Manual Shopify order sync requested for ' +
         input.lookbackDays +
         ' days' +
         (input.restoreRemoved ? ' including removed orders' : ''),
-    ),
-  );
+    );
+  });
   res.json({
     ok: true,
     message:

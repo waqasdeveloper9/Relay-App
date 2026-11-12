@@ -217,6 +217,7 @@ export interface ShopifySyncSettings {
   syncCustomerSmsConsent?: boolean;
   checkoutConsentAttributeKey?: string;
   checkoutConsentValues?: string[];
+  requireExplicitConsent?: boolean;
 }
 export interface DispatchNotificationSettings {
   enabled: boolean;

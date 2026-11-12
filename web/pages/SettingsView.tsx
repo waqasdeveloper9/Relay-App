@@ -113,6 +113,7 @@ export function SettingsView({ data, busy, act }: { data: Snapshot; busy: boolea
                     syncCustomerSmsConsent: sync.syncCustomerSmsConsent,
                     checkoutConsentAttributeKey: sync.checkoutConsentAttributeKey.trim(),
                     checkoutConsentValues,
+                    requireExplicitConsent: Boolean(sync.requireExplicitConsent),
                   },
                   support: {
                     ...support,
@@ -356,6 +357,19 @@ export function SettingsView({ data, busy, act }: { data: Snapshot; busy: boolea
             </div>
             <div className="checkbox-row">
               <input
+                id="sync-explicit-consent"
+                name="requireExplicitConsent"
+                type="checkbox"
+                checked={Boolean(sync.requireExplicitConsent)}
+                onChange={(e) => setSync({ ...sync, requireExplicitConsent: e.target.checked })}
+              />
+              <label htmlFor="sync-explicit-consent">
+                Require separate checkout opt-in checkbox before messaging (leave unchecked to
+                automatically send confirmation to any order with a phone number)
+              </label>
+            </div>
+            <div className="checkbox-row">
+              <input
                 id="sync-sms-consent"
                 name="syncCustomerSmsConsent"
                 type="checkbox"
@@ -364,7 +378,6 @@ export function SettingsView({ data, busy, act }: { data: Snapshot; busy: boolea
               />
               <label htmlFor="sync-sms-consent">
                 Sync explicit Shopify SMS / checkout opt-in into Relay messaging permission
-                (entering a phone number alone never grants permission)
               </label>
             </div>
             <div className="form-row">

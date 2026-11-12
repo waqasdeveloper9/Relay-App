@@ -883,6 +883,11 @@ export async function recordPermission(req: Request, res: Response): Promise<voi
     const o = s.workspace.orders.find((o) => o.id === req.params.id);
     if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
     o.consent = input.granted;
+    if (input.granted) {
+      planOrderMessage(s, o);
+    } else {
+      o.messageBlockedReason = 'Customer messaging permission has not been recorded';
+    }
     activity(
       s.workspace,
       'Messaging permission ' +

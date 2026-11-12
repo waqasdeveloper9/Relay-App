@@ -54,6 +54,7 @@ export const SHOPIFY_FULFILLMENT_ORDER_TOPICS = new Set([
 export function isSupportedShopifyTopic(topic: string): boolean {
   return (
     topic === 'app/uninstalled' ||
+    topic === 'orders/delete' ||
     SHOPIFY_ORDER_TOPICS.has(topic) ||
     SHOPIFY_FULFILLMENT_TOPICS.has(topic) ||
     SHOPIFY_FULFILLMENT_EVENT_TOPICS.has(topic) ||
@@ -62,6 +63,10 @@ export function isSupportedShopifyTopic(topic: string): boolean {
 }
 
 const idScalar = z.union([z.string(), z.number().safe()]).transform(String);
+
+export const shopifyOrderDeleteSchema = z.object({
+  id: idScalar,
+});
 
 export const shopifyFulfillmentWebhookSchema = z.object({
   order_id: idScalar,
@@ -97,6 +102,10 @@ export const shopifyFulfillmentOrderWebhookSchema = z.union([
 
 export function validateShopifyWebhookPayload(topic: string, payload: unknown): void {
   if (topic === 'app/uninstalled') return;
+  if (topic === 'orders/delete') {
+    shopifyOrderDeleteSchema.parse(payload);
+    return;
+  }
   if (SHOPIFY_ORDER_TOPICS.has(topic)) {
     shopifyOrderSchema.parse(payload);
     return;
@@ -125,6 +134,29 @@ export async function processShopifyEvent(
   const key = 'shopify:' + eventId;
   const existing = await getStore(merchantId);
   if (existing?.workspace.processedEvents.includes(key)) return;
+
+  if (topic === 'orders/delete') {
+    const parsed = shopifyOrderDeleteSchema.parse(payload);
+    const rawId = String(parsed.id).split('/').at(-1)!;
+    await mutate(merchantId, (s) => {
+      if (s.workspace.processedEvents.includes(key)) return;
+      const o = s.workspace.orders.find((ord) => ord.shopifyOrderId === rawId);
+      if (o && !o.archivedAt) {
+        o.archivedAt = new Date().toISOString();
+        for (const j of s.workspace.jobs.filter(
+          (j) => j.orderId === o.id && j.state === 'QUEUED',
+        )) {
+          j.state = 'FAILED';
+          j.retryable = false;
+          j.error = 'Order was deleted in Shopify. Queued action was cancelled.';
+          resolveNotification(s.workspace, 'job:' + j.id);
+        }
+        activity(s.workspace, `${o.number} was deleted in Shopify and removed from Relay.`);
+      }
+      s.workspace.processedEvents.push(key);
+    });
+    return;
+  }
 
   if (topic === 'app/uninstalled' || topic === 'orders/create' || topic === 'orders/cancelled') {
     await mutate(merchantId, (s) => {

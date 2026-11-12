@@ -267,9 +267,9 @@ test('webhook registration is tenant-scoped and idempotent', async () => {
   await request(callback(flow), flow.cookie);
   subscriptions.length = 0;
   assert.equal((await request('/integrations/shopify/webhooks', owner.cookie, {})).status, 200);
-  assert.equal(subscriptions.length, 7);
+  assert.equal(subscriptions.length, 8);
   assert.equal((await request('/integrations/shopify/webhooks', owner.cookie, {})).status, 200);
-  assert.equal(subscriptions.length, 7);
+  assert.equal(subscriptions.length, 8);
   assert.equal(
     (await getStore(owner.id))!.workspace.integration.shopifyWebhooksUrl,
     `${config.appUrl}/api/webhooks/shopify`,
@@ -298,13 +298,13 @@ test('optional fulfillment scopes request and register extended webhook topics',
     subscriptions.length = 0;
     const wh = await request('/integrations/shopify/webhooks', owner.cookie, {});
     assert.equal(wh.status, 200);
-    assert.equal(subscriptions.length, 14);
+    assert.equal(subscriptions.length, 15);
     assert.ok(subscriptions.some((s) => s.topic === 'FULFILLMENT_EVENTS_CREATE'));
     assert.ok(subscriptions.some((s) => s.topic === 'FULFILLMENT_ORDERS_PLACED_ON_HOLD'));
     assert.ok(subscriptions.some((s) => s.topic === 'FULFILLMENT_ORDERS_HOLD_RELEASED'));
     // Second call remains idempotent with no duplicate subscriptions created.
     assert.equal((await request('/integrations/shopify/webhooks', owner.cookie, {})).status, 200);
-    assert.equal(subscriptions.length, 14);
+    assert.equal(subscriptions.length, 15);
   } finally {
     grantedScope = 'write_orders,read_legal_policies';
   }

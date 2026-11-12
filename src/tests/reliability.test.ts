@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { demoWorkspace } from '../services/seed.js';
-import { createStore, getStore, publicWorkspace } from '../services/repository.js';
+import { createStore, getStore, publicWorkspace, mutate } from '../services/repository.js';
 import {
   acceptInbox,
   claimInbox,
@@ -1106,5 +1106,84 @@ test('interactive menu preserves UNKNOWN status cleanly on ambiguous 500 timeout
   } finally {
     Object.assign(config, prior);
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('orders/delete webhook archives order and cancels queued jobs', async () => {
+  const s = fixture();
+  await createStore(s);
+  const input = incoming('999');
+  await processShopifyEvent(s.merchant.id, 'orders/create', 'ev1', input);
+  const storeBefore = (await getStore(s.merchant.id))!;
+  const o = storeBefore.workspace.orders.find((ord) => ord.shopifyOrderId === '999')!;
+  assert.ok(!o.archivedAt);
+  await mutate(s.merchant.id, (st) => {
+    st.workspace.jobs.push({
+      id: randomUUID(),
+      orderId: o.id,
+      kind: 'CONFIRMATION',
+      state: 'QUEUED',
+      dueAt: new Date().toISOString(),
+      attempts: 0,
+    });
+  });
+  await processShopifyEvent(s.merchant.id, 'orders/delete', 'ev2', { id: 999 });
+  const storeAfter = (await getStore(s.merchant.id))!;
+  const orderAfter = storeAfter.workspace.orders.find((ord) => ord.shopifyOrderId === '999')!;
+  assert.ok(orderAfter.archivedAt);
+  assert.equal(storeAfter.workspace.jobs[0]!.state, 'FAILED');
+  assert.match(storeAfter.workspace.jobs[0]!.error!, /deleted in Shopify/i);
+});
+
+test('manual or background reconciliation archives orders deleted in Shopify', async () => {
+  const s = fixture();
+  await createStore(s);
+  await mutate(s.merchant.id, (st) => {
+    st.workspace.integration.shopDomain =
+      'test-sync-' + s.merchant.id.slice(0, 8) + '.myshopify.com';
+    st.workspace.integration.shopifyToken = encrypt('mock');
+    st.workspace.integration.shopifyVerifiedAt = new Date().toISOString();
+    ingestOrder(st, incoming('888'));
+  });
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    try {
+      const body = options?.body ? JSON.parse(String(options.body)) : {};
+      if (body.query && typeof body.query === 'string') {
+        if (body.query.includes('RelayRecovery')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                orders: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            }),
+          );
+        }
+        if (body.query.includes('VerifyShopifyOrders')) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                nodes: [null],
+              },
+            }),
+          );
+        }
+      }
+    } catch {
+      /* Fallback for unparseable mock requests */
+    }
+    return new Response(JSON.stringify({ data: {} }));
+  };
+  try {
+    await requestFullSync(s.merchant.id, 60, false);
+    await reconcileMerchant(s.merchant.id);
+    const storeAfter = (await getStore(s.merchant.id))!;
+    const ord = storeAfter.workspace.orders.find((o) => o.shopifyOrderId === '888')!;
+    assert.ok(ord.archivedAt);
+  } finally {
+    globalThis.fetch = original;
   }
 });

@@ -42,6 +42,7 @@ import {
 import { planOrderMessage } from '../services/order-ingestion.js';
 import { validateConfirmationTemplate } from '../services/order-confirmation.js';
 import { dispatchSettings } from '../models/workspace-defaults.js';
+import { reconcileMerchant } from '../services/shopify-reconciliation.js';
 
 export function snapshot(req: Request, res: Response): void {
   res.json({
@@ -1011,6 +1012,7 @@ export async function syncOrders(req: Request, res: Response): Promise<void> {
   if (!req.store.workspace.integration.shopifyToken)
     throw new InputError('Connect Shopify before synchronizing orders');
   await requestFullSync(req.merchantId, input.lookbackDays, input.restoreRemoved);
+  void reconcileMerchant(req.merchantId).catch(() => {});
   await mutate(req.merchantId, (s) =>
     activity(
       s.workspace,

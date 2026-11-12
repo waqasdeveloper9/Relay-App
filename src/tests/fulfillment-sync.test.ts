@@ -1658,6 +1658,23 @@ test('bidirectional Shopify payment/fulfillment actions, bulk operations, ON_HOL
         .delivery,
       'Unfulfilled',
     );
+
+    // 5. Unfulfilled order can be marked Delivered directly
+    assert.equal(
+      (
+        await apiRequest('/orders/bulk', cookie, {
+          action: 'mark_delivered',
+          ids: [order9403Id],
+        })
+      ).status,
+      200,
+    );
+    await tick();
+    assert.equal(
+      (await getStore(store.merchant.id))!.workspace.orders.find((o) => o.id === order9403Id)!
+        .delivery,
+      'Delivered',
+    );
   } finally {
     for (const sId of [storeNoScope.merchant.id, store.merchant.id]) {
       await mutate(sId, (s) => {

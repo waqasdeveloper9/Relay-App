@@ -853,7 +853,14 @@ export async function createFulfillmentDeliveredEvent(
   i: Integration,
   order: Order,
 ): Promise<'DELIVERED'> {
-  const fulfillmentId = await latestActiveFulfillmentId(i, order);
+  let fulfillmentId: string;
+  try {
+    fulfillmentId = await latestActiveFulfillmentId(i, order);
+  } catch (err) {
+    // If order has no active fulfillment in Shopify yet, fulfill it first
+    await createShopifyFulfillment(i, order);
+    fulfillmentId = await latestActiveFulfillmentId(i, order);
+  }
   const res = z
     .object({
       fulfillmentEventCreate: z.object({

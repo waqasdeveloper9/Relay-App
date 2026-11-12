@@ -252,24 +252,29 @@ export async function tick(): Promise<void> {
         });
         continue;
       }
-      const candidate = store.workspace.jobs.find(
-        (j) => j.state === 'QUEUED' && Date.parse(j.dueAt) <= Date.now(),
-      );
-      if (!candidate) continue;
-      const claimed = await mutate(id, (s) => {
-        const j = s.workspace.jobs.find((j) => j.id === candidate.id);
-        if (!j || j.state !== 'QUEUED') return false;
-        // Persist an uncertain state before an external call to prevent duplicate
-        // sends after a crash. Unknown outcomes require operator reconciliation.
-        j.state = 'UNKNOWN';
-        j.claimedAt = new Date().toISOString();
-        j.attempts++;
-        return structuredClone(s);
-      });
-      if (!claimed) continue;
-      const order = claimed.workspace.orders.find((o) => o.id === candidate.orderId);
-      let historyId: string | undefined;
-      try {
+      let processedInStore = 0;
+      while (processedInStore < 25) {
+        const currentStore = (await getStore(id))!;
+        if (!currentStore) break;
+        const candidate = currentStore.workspace.jobs.find(
+          (j) => j.state === 'QUEUED' && Date.parse(j.dueAt) <= Date.now(),
+        );
+        if (!candidate) break;
+        processedInStore++;
+        const claimed = await mutate(id, (s) => {
+          const j = s.workspace.jobs.find((j) => j.id === candidate.id);
+          if (!j || j.state !== 'QUEUED') return false;
+          // Persist an uncertain state before an external call to prevent duplicate
+          // sends after a crash. Unknown outcomes require operator reconciliation.
+          j.state = 'UNKNOWN';
+          j.claimedAt = new Date().toISOString();
+          j.attempts++;
+          return structuredClone(s);
+        });
+        if (!claimed) continue;
+        const order = claimed.workspace.orders.find((o) => o.id === candidate.orderId);
+        let historyId: string | undefined;
+        try {
         if (isSupportReply(candidate.kind)) {
           const context = supportReplyContext(claimed, candidate, order);
           if (isMenuIntent(context.intent)) {
@@ -821,6 +826,7 @@ export async function tick(): Promise<void> {
             `${candidate.kind.toLowerCase()} needs attention for ${order?.number ?? 'support reply'}`,
           );
         });
+      }
       }
     }
   } finally {

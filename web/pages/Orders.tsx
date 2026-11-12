@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BookmarkPlus,
   Check,
   ChevronDown,
@@ -11,7 +12,6 @@ import {
   X,
 } from 'lucide-react';
 import type { Order, OrderView } from '../../src/models/types';
-import { shopifySyncSettings } from '../../src/models/workspace-defaults';
 import { api, type PublicWorkspace } from '../api';
 import { type Act } from '../lib/format';
 import { Modal, OrderTable } from '../components/ui';
@@ -120,7 +120,6 @@ export function Orders({
   busy: boolean;
   act: Act;
 }) {
-  const sync = shopifySyncSettings(w);
   const savedViews = w.settings.orderViews ?? [];
   const [filter, setFilter] = useState('All orders'),
     [paymentFilter, setPaymentFilter] = useState('ALL'),
@@ -135,6 +134,8 @@ export function Orders({
     ids: string[];
     count: number;
   }>();
+  const [alsoMarkDelivered, setAlsoMarkDelivered] = useState(true);
+  const [showWarningStep, setShowWarningStep] = useState(false);
   const [days, setDays] = useState(60),
     [restoreRemoved, setRestoreRemoved] = useState(true),
     [status, setStatus] = useState<SyncStatus>(),
@@ -215,13 +216,16 @@ export function Orders({
   const pageOffset = Math.min(offset, Math.max(0, Math.floor((filtered.length - 1) / 8) * 8)),
     pageOrders = filtered.slice(pageOffset, pageOffset + 8);
   const syncing = !!(status?.sync.manualRequested || status?.sync.recovering);
-  const choose = (action: Action, all = false) =>
+  const choose = (action: Action, all = false) => {
+    setAlsoMarkDelivered(true);
+    setShowWarningStep(false);
     setPending({
       action,
       all,
       ids: all ? [] : [...selected],
       count: all ? w.orders.length : selected.size,
     });
+  };
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -229,6 +233,18 @@ export function Orders({
       else if (next.size < 500) next.add(id);
       return next;
     });
+
+  const selectedOrders = useMemo(() => {
+    if (!pending) return [];
+    if (pending.all) return filtered.filter((o) => !o.archivedAt);
+    const idSet = new Set(pending.ids);
+    return w.orders.filter((o) => idSet.has(o.id));
+  }, [pending, filtered, w.orders]);
+
+  const undeliveredOrders = useMemo(
+    () => selectedOrders.filter((o) => o.delivery !== 'Delivered'),
+    [selectedOrders],
+  );
 
   const selectTab = (index: number, focusTarget = false) => {
     const tab = DAILY_TABS[index];
@@ -285,36 +301,54 @@ export function Orders({
       case 'review':
         return `Mark ${count} order(s) for review?`;
       case 'mark_paid':
-        return `Mark ${count} order(s) paid in Shopify?`;
+        return `Mark ${count} order(s) as Paid in Shopify?`;
       case 'mark_delivered':
-        return `Mark ${count} order(s) delivered in Shopify?`;
+        return `Mark ${count} order(s) as Delivered in Shopify?`;
       case 'mark_in_progress':
-        return `Mark ${count} order(s) in progress?`;
+        return `Mark ${count} order(s) In Progress in Shopify?`;
       case 'hold':
-        return `Hold fulfillment for ${count} order(s)?`;
+        return `Place fulfillment hold on ${count} order(s)?`;
       case 'release_hold':
-        return `Release Relay holds for ${count} order(s)?`;
+        return `Release fulfillment hold for ${count} order(s)?`;
     }
   };
 
-  const modalDetail = (action: Action) => {
+  const promptText = (action: Action, orders: Order[]) => {
+    const single = orders.length === 1;
+    const first = orders[0];
     switch (action) {
-      case 'remove':
-        return 'These orders will be hidden in Relay and their queued automation stopped. Shopify orders, message history and audit records remain unchanged. Use Restore removed orders when syncing to bring them back.';
-      case 'confirm':
-        return `Relay will confirm eligible COD orders and queue ${sync.confirmedTag} tags in Shopify. This does not mark orders paid or fulfilled. Cancelled orders cannot be confirmed.`;
-      case 'review':
-        return 'These orders will be marked for review in Relay. Shopify tags or holds apply only if configured in Settings.';
       case 'mark_paid':
-        return 'Relay will mark eligible payment-pending, authorized, or partially paid orders as Paid in Shopify, move pending orders to Confirmed, and stop queued COD confirmation reminders. Already paid orders are skipped.';
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to set this order status as Paid? This will also update the payment status directly in your Shopify store.`
+          : `Would you like to set the payment status as Paid for these ${orders.length} selected orders? This will also update the payment status directly in your Shopify store.`;
       case 'mark_delivered':
-        return 'Relay will record a Shopify Delivered fulfillment event for eligible fulfilled orders in transit. Unfulfilled or already delivered orders are skipped.';
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to mark this order as Delivered? This will also record the delivery event directly in your Shopify store.`
+          : `Would you like to mark these ${orders.length} selected orders as Delivered? This will also record the delivery events directly in your Shopify store.`;
       case 'mark_in_progress':
-        return 'Relay will mark open Shopify fulfillment orders as In progress so your packing team can track them.';
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to set this order status as In Progress? This will also update the fulfillment status directly in your Shopify store.`
+          : `Would you like to set the fulfillment status as In Progress for these ${orders.length} selected orders? This will also update the fulfillment status directly in your Shopify store.`;
       case 'hold':
-        return 'Relay will place a Relay-owned fulfillment hold (handle: relay-hold) on eligible Unfulfilled/In-progress orders.';
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to place a fulfillment hold on this order? This will hold fulfillment directly in your Shopify store to prevent dispatch.`
+          : `Would you like to place a fulfillment hold on these ${orders.length} selected orders? This will hold fulfillment directly in your Shopify store to prevent dispatch.`;
       case 'release_hold':
-        return 'Relay will release Relay-owned fulfillment holds on selected On-hold orders; third-party holds in Shopify are untouched.';
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to release the fulfillment hold on this order? This will clear the hold directly in your Shopify store so fulfillment can proceed.`
+          : `Would you like to release the fulfillment hold on these ${orders.length} selected orders? This will clear the holds directly in your Shopify store so fulfillment can proceed.`;
+      case 'confirm':
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to mark this order as Confirmed? This will confirm the order and sync the verified confirmation tag directly to your Shopify store.`
+          : `Would you like to mark these ${orders.length} selected orders as Confirmed? This will confirm the orders and sync the verified confirmation tags directly to your Shopify store.`;
+      case 'review':
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to mark this order for review? This will flag it for merchant review and update any configured review tags in your Shopify store.`
+          : `Would you like to mark these ${orders.length} selected orders for review? This will flag them for merchant review and update any configured review tags in your Shopify store.`;
+      case 'remove':
+        return single && first
+          ? `Order number: ${first.number}, Customer: ${first.name || 'Customer'}${first.phone ? ` (${first.phone})` : ''}. Would you like to remove this order from Relay? This will hide it from your Relay workspace. Your Shopify order and store data remain completely unchanged.`
+          : `Would you like to remove these ${orders.length} selected orders from Relay? This will hide them from your Relay workspace. Your Shopify orders and store data remain completely unchanged.`;
     }
   };
 
@@ -323,19 +357,19 @@ export function Orders({
       case 'remove':
         return 'Remove from Relay';
       case 'confirm':
-        return 'Confirm orders';
+        return 'Confirm order(s)';
       case 'review':
         return 'Mark for review';
       case 'mark_paid':
-        return 'Mark paid in Shopify';
+        return 'Set order status Paid';
       case 'mark_delivered':
-        return 'Mark delivered';
+        return 'Set status Delivered';
       case 'mark_in_progress':
-        return 'Mark in progress';
+        return 'Set status In Progress';
       case 'hold':
-        return 'Place holds';
+        return 'Place fulfillment hold';
       case 'release_hold':
-        return 'Release holds';
+        return 'Release hold';
     }
   };
 
@@ -792,53 +826,314 @@ export function Orders({
       </section>
       {pending && (
         <Modal
-          title={modalTitle(pending.action, pending.count)}
-          subtitle={pending.all ? 'All currently visible Relay orders' : 'Selected orders'}
+          title={
+            showWarningStep
+              ? 'Warning: Confirm Payment for Undelivered Orders'
+              : modalTitle(pending.action, pending.count)
+          }
+          subtitle={
+            showWarningStep
+              ? 'Action requires explicit merchant confirmation'
+              : pending.all
+                ? 'All currently visible orders'
+                : 'Selected order details'
+          }
           close={() => {
-            if (!busy) setPending(undefined);
+            if (!busy) {
+              setPending(undefined);
+              setShowWarningStep(false);
+            }
           }}
         >
-          <p>{modalDetail(pending.action)}</p>
-          <div className="drawer-actions">
-            <button
-              type="button"
-              className="button secondary"
-              disabled={busy}
-              onClick={() => setPending(undefined)}
-            >
-              Keep current orders
-            </button>
-            <button
-              type="button"
-              className={'button ' + (pending.action === 'remove' ? 'danger' : 'primary')}
-              disabled={busy}
-              onClick={() =>
-                void act(
-                  async () => {
-                    const action = pending.action;
-                    const res = await api<{ message?: string }>('/orders/bulk', {
-                      action,
-                      ids: pending.ids,
-                      all: pending.all,
-                      expectedCount: pending.all ? pending.count : undefined,
-                      confirmed: true,
-                    });
-                    if (mode === 'demo' && SHOPIFY_BULK_ACTIONS.has(action)) {
-                      await api('/jobs/run', {});
+          {showWarningStep ? (
+            <div>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '12px',
+                  background: '#fef2f2',
+                  border: '1px solid #ef4444',
+                  borderRadius: '8px',
+                  padding: '14px 16px',
+                  marginBottom: '16px',
+                  color: '#991b1b',
+                  fontSize: '13px',
+                  lineHeight: '1.5',
+                }}
+              >
+                <AlertTriangle size={22} style={{ color: '#dc2626', flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+                    Warning: Order(s) Not Yet Delivered
+                  </div>
+                  <div>
+                    {undeliveredOrders.length === 1
+                      ? `Order ${undeliveredOrders[0].number} is in "${undeliveredOrders[0].delivery}" state and has not been marked Delivered yet.`
+                      : `The following orders are not delivered yet: ${undeliveredOrders.map((o) => `${o.number} (${o.delivery})`).join(', ')}.`}
+                  </div>
+                  <div style={{ marginTop: '8px', fontWeight: 500 }}>
+                    {alsoMarkDelivered
+                      ? 'Are you sure you want to proceed? Relay will set the status to Paid AND mark fulfillment as Delivered directly in Shopify and Relay.'
+                      : 'Are you sure you want to proceed? Relay will mark the order as Paid in Shopify, while fulfillment will remain in its current state.'}
+                  </div>
+                </div>
+              </div>
+              <div className="drawer-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => setShowWarningStep(false)}
+                >
+                  Go back
+                </button>
+                <button
+                  type="button"
+                  className="button primary"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(
+                      async () => {
+                        const action = pending.action;
+                        const res = await api<{ message?: string }>('/orders/bulk', {
+                          action,
+                          ids: pending.ids,
+                          all: pending.all,
+                          expectedCount: pending.all ? pending.count : undefined,
+                          confirmed: true,
+                          alsoMarkDelivered,
+                        });
+                        if (mode === 'demo' && SHOPIFY_BULK_ACTIONS.has(action)) {
+                          await api('/jobs/run', {});
+                        }
+                        setSelected(new Set());
+                        setPending(undefined);
+                        setShowWarningStep(false);
+                        return res.message;
+                      },
+                      alsoMarkDelivered
+                        ? 'Orders marked as Delivered and Paid in Shopify.'
+                        : 'Orders marked as Paid in Shopify.',
+                    )
+                  }
+                >
+                  {busy
+                    ? 'Processing…'
+                    : alsoMarkDelivered
+                      ? 'Yes, Mark Delivered & Paid'
+                      : 'Yes, Mark Paid'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              {pending.action === 'mark_paid' && undeliveredOrders.length > 0 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '12px',
+                    background: '#fffbeb',
+                    border: '1px solid #f59e0b',
+                    borderRadius: '8px',
+                    padding: '12px 14px',
+                    marginBottom: '16px',
+                    color: '#92400e',
+                    fontSize: '13px',
+                    lineHeight: '1.45',
+                  }}
+                >
+                  <AlertTriangle size={20} style={{ color: '#d97706', flexShrink: 0, marginTop: '2px' }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>Delivery Warning</div>
+                    <div>
+                      {undeliveredOrders.length === 1
+                        ? `Order ${undeliveredOrders[0].number} is in "${undeliveredOrders[0].delivery}" state and has not been marked Delivered yet.`
+                        : `${undeliveredOrders.length} order(s) (${undeliveredOrders.map((o) => `${o.number} [${o.delivery}]`).join(', ')}) have not been marked Delivered yet.`}
+                    </div>
+                    <div style={{ marginTop: '4px' }}>
+                      In Cash on Delivery (COD) workflows, payment is collected upon customer delivery.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  padding: '12px 14px',
+                  marginBottom: '16px',
+                  fontSize: '13px',
+                }}
+              >
+                {selectedOrders.length === 1 && selectedOrders[0] ? (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'auto 1fr',
+                      gap: '6px 14px',
+                      color: '#334155',
+                    }}
+                  >
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Order:</span>
+                    <span style={{ fontWeight: 600 }}>{selectedOrders[0].number}</span>
+
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Customer:</span>
+                    <span>
+                      {selectedOrders[0].name || 'Customer'}{' '}
+                      {selectedOrders[0].phone ? `(${selectedOrders[0].phone})` : ''}
+                    </span>
+
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Amount:</span>
+                    <span>
+                      {selectedOrders[0].currency} {selectedOrders[0].amount.toLocaleString()}
+                      {selectedOrders[0].paymentMethod ? ` (${selectedOrders[0].paymentMethod})` : ''}
+                    </span>
+
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Fulfillment:</span>
+                    <span>{selectedOrders[0].delivery}</span>
+
+                    <span style={{ fontWeight: 600, color: '#64748b' }}>Payment:</span>
+                    <span style={{ textTransform: 'capitalize' }}>
+                      {selectedOrders[0].financialStatus || 'Pending'}
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: '8px', color: '#475569' }}>
+                      Selected Orders ({selectedOrders.length}):
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: '140px',
+                        overflowY: 'auto',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                      }}
+                    >
+                      {selectedOrders.slice(0, 6).map((o) => (
+                        <div
+                          key={o.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            fontSize: '12px',
+                            padding: '6px 10px',
+                            background: '#ffffff',
+                            borderRadius: '4px',
+                            border: '1px solid #e2e8f0',
+                          }}
+                        >
+                          <span style={{ fontWeight: 600 }}>
+                            {o.number} · {o.name || 'Customer'} {o.phone ? `(${o.phone})` : ''}
+                          </span>
+                          <span style={{ color: '#64748b' }}>
+                            {o.delivery} · {o.financialStatus || 'Pending'} · {o.currency}{' '}
+                            {o.amount.toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                      {selectedOrders.length > 6 && (
+                        <div
+                          style={{
+                            color: '#64748b',
+                            fontSize: '12px',
+                            fontStyle: 'italic',
+                            textAlign: 'center',
+                            marginTop: '2px',
+                          }}
+                        >
+                          + {selectedOrders.length - 6} more orders
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <p style={{ margin: '0 0 16px', fontSize: '14px', lineHeight: '1.5', color: '#1e293b' }}>
+                {promptText(pending.action, selectedOrders)}
+              </p>
+
+              {pending.action === 'mark_paid' && undeliveredOrders.length > 0 && (
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    margin: '0 0 16px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    color: '#334155',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={alsoMarkDelivered}
+                    onChange={(e) => setAlsoMarkDelivered(e.target.checked)}
+                  />
+                  <span>
+                    Also mark{' '}
+                    {undeliveredOrders.length === 1
+                      ? `this order (${undeliveredOrders[0].number})`
+                      : 'these order(s)'}{' '}
+                    as Delivered in Shopify and Relay
+                  </span>
+                </label>
+              )}
+
+              <div className="drawer-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => setPending(undefined)}
+                >
+                  Keep current orders
+                </button>
+                <button
+                  type="button"
+                  className={'button ' + (pending.action === 'remove' ? 'danger' : 'primary')}
+                  disabled={busy}
+                  onClick={() => {
+                    if (pending.action === 'mark_paid' && undeliveredOrders.length > 0) {
+                      setShowWarningStep(true);
+                      return;
                     }
-                    setSelected(new Set());
-                    setPending(undefined);
-                    return res.message;
-                  },
-                  pending.action === 'remove'
-                    ? 'Orders removed from Relay. Shopify unchanged.'
-                    : 'Bulk order action saved.',
-                )
-              }
-            >
-              {busy ? 'Processing…' : modalConfirmLabel(pending.action)}
-            </button>
-          </div>
+                    void act(
+                      async () => {
+                        const action = pending.action;
+                        const res = await api<{ message?: string }>('/orders/bulk', {
+                          action,
+                          ids: pending.ids,
+                          all: pending.all,
+                          expectedCount: pending.all ? pending.count : undefined,
+                          confirmed: true,
+                          alsoMarkDelivered:
+                            pending.action === 'mark_paid' ? alsoMarkDelivered : undefined,
+                        });
+                        if (mode === 'demo' && SHOPIFY_BULK_ACTIONS.has(action)) {
+                          await api('/jobs/run', {});
+                        }
+                        setSelected(new Set());
+                        setPending(undefined);
+                        return res.message;
+                      },
+                      pending.action === 'remove'
+                        ? 'Orders removed from Relay. Shopify unchanged.'
+                        : 'Bulk order action saved.',
+                    );
+                  }}
+                >
+                  {busy ? 'Processing…' : modalConfirmLabel(pending.action)}
+                </button>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </>

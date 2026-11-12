@@ -3,6 +3,7 @@ import { sendLiveInboxReply } from '../services/inbox-replies.js';
 import { conversationPhone, customerThreads } from '../models/customer-conversations.js';
 import { approveCancellation } from '../services/cancellation.js';
 import { applyBulkOrderAction } from '../services/order-operations.js';
+import { tick } from '../services/worker.js';
 import type { Request, Response } from 'express';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -236,11 +237,19 @@ export async function shopifyOrderAction(req: Request, res: Response): Promise<v
         .optional(),
       notifyCustomer: z.boolean().optional(),
       reasonNotes: z.string().trim().max(250).optional(),
+      alsoMarkDelivered: z.boolean().optional(),
     })
     .parse(req.body);
   const result = await mutate(req.merchantId, (s) => {
     const o = s.workspace.orders.find((o) => o.id === req.params.id && !o.archivedAt);
     if (!o) throw Object.assign(new Error('Order not found'), { status: 404 });
+    if (input.action === 'mark_paid' && input.alsoMarkDelivered && o.delivery !== 'Delivered') {
+      try {
+        queueShopifyOrderAction(s.workspace, o, 'mark_delivered');
+      } catch {
+        // Ignore if already queued or delivered
+      }
+    }
     return queueShopifyOrderAction(s.workspace, o, input.action, {
       trackingCompany: input.trackingCompany,
       trackingNumber: input.trackingNumber,
@@ -249,6 +258,7 @@ export async function shopifyOrderAction(req: Request, res: Response): Promise<v
       reasonNotes: input.reasonNotes,
     });
   });
+  void tick().catch(() => {});
   res.json({ ok: true, ...result });
 }
 export async function simulate(req: Request, res: Response): Promise<void> {
@@ -1034,13 +1044,22 @@ export async function bulkOrders(req: Request, res: Response): Promise<void> {
       all: z.boolean().default(false),
       expectedCount: z.number().int().nonnegative().optional(),
       confirmed: z.boolean().default(false),
+      alsoMarkDelivered: z.boolean().optional(),
     })
     .parse(req.body);
   if (input.action === 'remove' && !input.confirmed)
     throw new InputError('Confirm removal from Relay first. Shopify orders will remain unchanged.');
-  const result = await mutate(req.merchantId, (s) =>
-    applyBulkOrderAction(s, input.action, input.ids, input.all, input.expectedCount),
-  );
+  const result = await mutate(req.merchantId, (s) => {
+    if (input.action === 'mark_paid' && input.alsoMarkDelivered) {
+      try {
+        applyBulkOrderAction(s, 'mark_delivered', input.ids, input.all);
+      } catch {
+        // Ignore if already queued or delivered
+      }
+    }
+    return applyBulkOrderAction(s, input.action, input.ids, input.all, input.expectedCount);
+  });
+  void tick().catch(() => {});
   const actionLabel: Record<typeof input.action, string> = {
     remove: 'removed from Relay',
     confirm: 'confirmed; Shopify tags queued',

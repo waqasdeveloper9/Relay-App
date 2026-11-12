@@ -210,8 +210,12 @@ export function checkShopifyActionEligibility(
   }
 
   if (action === 'mark_delivered') {
-    if (!['In transit', 'Partially fulfilled'].includes(order.delivery))
-      throw new InputError('Only fulfilled orders in transit can be marked Delivered');
+    if (
+      !['Unfulfilled', 'In progress', 'Scheduled', 'In transit', 'Partially fulfilled'].includes(
+        order.delivery,
+      )
+    )
+      throw new InputError('Only active or unfulfilled orders can be marked Delivered');
     if (!config.demo && !hasShopifyScope(w.integration, 'write_fulfillments'))
       throw new InputError(
         'Shopify write_fulfillments permission is missing. Enable fulfillment scopes and reconnect Shopify in Integrations.',

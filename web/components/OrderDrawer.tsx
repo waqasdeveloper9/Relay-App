@@ -136,7 +136,9 @@ export function OrderDrawer({
         !hasActiveJob('FULFILL_ORDER'));
   const canMarkDelivered =
     !isCancelled &&
-    ['In transit', 'Partially fulfilled'].includes(o.delivery) &&
+    ['Unfulfilled', 'In progress', 'Scheduled', 'In transit', 'Partially fulfilled'].includes(
+      o.delivery,
+    ) &&
     hasFulfillWriteScope &&
     !hasActiveJob('MARK_DELIVERED');
 

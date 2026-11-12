@@ -8,6 +8,8 @@ import {
   Loader2,
   LockKeyhole,
   MessageCircle,
+  Pencil,
+  Plus,
   Send,
   ShoppingBag,
   X,
@@ -20,6 +22,7 @@ import {
 } from '../../src/models/workspace-defaults';
 import { api, type Snapshot } from '../api';
 import { type Act } from '../lib/format';
+import { Modal } from '../components/ui';
 
 const DISPATCH_VAR_LABELS: Record<DispatchVariableKey, string> = {
   customer_name: 'Customer name',
@@ -142,7 +145,19 @@ export function Integrations({ data, busy, act }: { data: Snapshot; busy: boolea
     languageCode: i.languageCode,
   });
   const [dispatchForm, setDispatchForm] = useState(() => dispatchSettings(data.workspace));
-  const [templateDraft, setTemplateDraft] = useState({ name: '', language: 'en_US' });
+  const [templateModal, setTemplateModal] = useState<{
+    open: boolean;
+    mode: 'add' | 'edit';
+    oldId: string;
+    name: string;
+    language: string;
+  }>({
+    open: false,
+    mode: 'add',
+    oldId: '',
+    name: '',
+    language: 'en',
+  });
   const [result, setResult] = useState<Record<string, string>>({});
   const [verifyToken, setVerifyToken] = useState('');
   const [copied, setCopied] = useState('');
@@ -220,12 +235,78 @@ export function Integrations({ data, busy, act }: { data: Snapshot; busy: boolea
               : !ownVerifiedNumber
                 ? 'Confirm below that this is your verified test number.'
                 : '';
-  const templates = [...(data.workspace.settings.savedTemplates ?? [])];
+  const rawTemplates = [...(data.workspace.settings.savedTemplates ?? [])];
   for (const value of [i, form]) {
     const id = value.templateName + ':' + value.languageCode;
-    if (!templates.some((t) => t.id === id))
-      templates.push({ id, name: value.templateName, language: value.languageCode });
+    if (
+      !rawTemplates.some(
+        (t) => t.id === id || (t.name === value.templateName && t.language === value.languageCode),
+      )
+    )
+      rawTemplates.push({ id, name: value.templateName, language: value.languageCode });
   }
+  const seenTemplates = new Set<string>();
+  const templates = rawTemplates.filter((t) => {
+    const key = `${t.name}:${t.language}`;
+    if (seenTemplates.has(key)) return false;
+    seenTemplates.add(key);
+    return true;
+  });
+
+  const handleSaveTemplateModal = () => {
+    const name = templateModal.name.trim();
+    const language = templateModal.language.trim();
+    if (!name || !language) return;
+    void act(async () => {
+      if (templateModal.mode === 'add') {
+        const res = await api<{ ok: boolean; id: string }>('/integrations/whatsapp/templates', {
+          name,
+          language,
+        });
+        setForm((f) => ({ ...f, templateName: name, languageCode: language }));
+        const currentSaved = (data.workspace.settings.savedTemplates ??= []);
+        if (
+          !currentSaved.some((t) => t.id === res.id || (t.name === name && t.language === language))
+        ) {
+          currentSaved.push({ id: res.id, name, language });
+        }
+      } else {
+        await api('/integrations/whatsapp/templates/update', {
+          oldId: templateModal.oldId,
+          name,
+          language,
+        });
+        setForm((f) => ({ ...f, templateName: name, languageCode: language }));
+        const currentSaved = (data.workspace.settings.savedTemplates ??= []);
+        const idx = currentSaved.findIndex(
+          (t) => t.id === templateModal.oldId || `${t.name}:${t.language}` === templateModal.oldId,
+        );
+        const newId = `${name}:${language}`;
+        if (idx !== -1) {
+          currentSaved[idx] = { id: newId, name, language };
+        } else {
+          currentSaved.push({ id: newId, name, language });
+        }
+      }
+      setTemplateModal((m) => ({ ...m, open: false }));
+    }, templateModal.mode === 'add' ? 'Template saved. Click Save WhatsApp to activate it.' : 'Template updated.');
+  };
+
+  const handleDeleteTemplate = (idToDelete: string) => {
+    void act(async () => {
+      await api('/integrations/whatsapp/templates/delete', { id: idToDelete });
+      const currentSaved = (data.workspace.settings.savedTemplates ?? []).filter(
+        (t) => t.id !== idToDelete && `${t.name}:${t.language}` !== idToDelete,
+      );
+      data.workspace.settings.savedTemplates = currentSaved;
+      const currentId = `${form.templateName}:${form.languageCode}`;
+      if (currentId === idToDelete || form.templateName === idToDelete.split(':')[0]) {
+        const fallback = currentSaved[0] ?? { name: 'relay_order_confirmation_v1', language: 'en' };
+        setForm((f) => ({ ...f, templateName: fallback.name, languageCode: fallback.language }));
+      }
+      setTemplateModal((m) => ({ ...m, open: false }));
+    }, 'Template removed from saved templates.');
+  };
   const checkConnections = () => {
     void act(async () => {
       setResult((v) => ({ ...v, connections: 'Checking saved connections…' }));
@@ -590,74 +671,71 @@ export function Integrations({ data, busy, act }: { data: Snapshot; busy: boolea
               i.hasWhatsappToken ? 'Saved token in use' : 'Enter your Meta access token',
               true,
             )}
-            <label className="field">
-              <span>Confirmation template</span>
-              <select
-                name="templateSelection"
-                value={form.templateName + ':' + form.languageCode}
-                onChange={(e) => {
-                  const t = templates.find((t) => t.id === e.target.value);
-                  if (t) setForm((f) => ({ ...f, templateName: t.name, languageCode: t.language }));
-                }}
-              >
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} — {t.language}
-                  </option>
-                ))}
-              </select>
+            <div className="field">
+              <label htmlFor="templateSelectionSelect">Confirmation template</label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  id="templateSelectionSelect"
+                  name="templateSelection"
+                  style={{ flex: '1 1 200px' }}
+                  value={form.templateName + ':' + form.languageCode}
+                  onChange={(e) => {
+                    const t = templates.find((t) => t.id === e.target.value);
+                    if (t) setForm((f) => ({ ...f, templateName: t.name, languageCode: t.language }));
+                  }}
+                >
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} — {t.language}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="button secondary"
+                  style={{ whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() =>
+                    setTemplateModal({
+                      open: true,
+                      mode: 'add',
+                      oldId: '',
+                      name: '',
+                      language: 'en',
+                    })
+                  }
+                >
+                  <Plus size={15} />
+                  Add Template
+                </button>
+                <button
+                  type="button"
+                  className="button secondary"
+                  style={{ whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  title="Edit or delete selected template"
+                  onClick={() => {
+                    const cur =
+                      templates.find(
+                        (t) => t.name === form.templateName && t.language === form.languageCode,
+                      ) ?? templates[0];
+                    if (cur) {
+                      setTemplateModal({
+                        open: true,
+                        mode: 'edit',
+                        oldId: cur.id || `${cur.name}:${cur.language}`,
+                        name: cur.name,
+                        language: cur.language,
+                      });
+                    }
+                  }}
+                >
+                  <Pencil size={14} />
+                  Edit / Delete
+                </button>
+              </div>
               <small>
                 Saved selection: {i.templateName} / {i.languageCode}
               </small>
-            </label>
-            <details>
-              <summary>Add a template</summary>
-              <div className="form-row">
-                <label className="field">
-                  <span>Template name</span>
-                  <input
-                    name="draftTemplateName"
-                    autoCorrect="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={templateDraft.name}
-                    placeholder="relay_order_confirmation_v1"
-                    onChange={(e) => setTemplateDraft((d) => ({ ...d, name: e.target.value }))}
-                  />
-                </label>
-                <label className="field">
-                  <span>Template language</span>
-                  <input
-                    name="draftTemplateLanguage"
-                    autoCorrect="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={templateDraft.language}
-                    placeholder="en_US"
-                    onChange={(e) => setTemplateDraft((d) => ({ ...d, language: e.target.value }))}
-                  />
-                </label>
-              </div>
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy || !templateDraft.name.trim() || !templateDraft.language.trim()}
-                onClick={() => {
-                  void act(async () => {
-                    await api('/integrations/whatsapp/templates', templateDraft);
-                    setForm((f) => ({
-                      ...f,
-                      templateName: templateDraft.name.trim(),
-                      languageCode: templateDraft.language.trim(),
-                    }));
-                    setTemplateDraft({ name: '', language: 'en_US' });
-                  }, 'Template saved. Save integrations to activate this selection.');
-                }}
-              >
-                Save template
-              </button>
-              <p className="muted">Use the exact approved name and language from Meta.</p>
-            </details>
+            </div>
             <details>
               <summary>Order template requirements</summary>
               <p>
@@ -1412,6 +1490,140 @@ export function Integrations({ data, busy, act }: { data: Snapshot; busy: boolea
           webhook subscription. Automatic order messaging has a separate activation step.
         </p>
       </details>
+      {templateModal.open && (
+        <Modal
+          title={templateModal.mode === 'add' ? 'Add confirmation template' : 'Edit or delete template'}
+          subtitle={
+            templateModal.mode === 'add'
+              ? 'Register a template name and language approved in your Meta WhatsApp account.'
+              : 'Update or remove this template from your saved selections.'
+          }
+          close={() => setTemplateModal((m) => ({ ...m, open: false }))}
+        >
+          <div className="form-stack">
+            <div className="form-row">
+              <label className="field">
+                <span>Template name *</span>
+                <input
+                  name="modalTemplateName"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={templateModal.name}
+                  placeholder="e.g. relay_order_confirmation_v1"
+                  onChange={(e) => setTemplateModal((m) => ({ ...m, name: e.target.value }))}
+                />
+              </label>
+              <label className="field">
+                <span>Template language *</span>
+                <input
+                  name="modalTemplateLanguage"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  value={templateModal.language}
+                  placeholder="e.g. en or en_US"
+                  onChange={(e) => setTemplateModal((m) => ({ ...m, language: e.target.value }))}
+                />
+              </label>
+            </div>
+            <p className="muted" style={{ fontSize: 13, marginTop: -4 }}>
+              Tip: In Meta WhatsApp Manager, templates labeled &quot;English&quot; use language code <code>en</code>, while &quot;English (US)&quot; uses <code>en_US</code>.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              <div>
+                {templateModal.mode === 'edit' && (
+                  <button
+                    type="button"
+                    className="button danger"
+                    disabled={busy}
+                    onClick={() => handleDeleteTemplate(templateModal.oldId)}
+                  >
+                    Delete template
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setTemplateModal((m) => ({ ...m, open: false }))}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="button primary"
+                  disabled={busy || !templateModal.name.trim() || !templateModal.language.trim()}
+                  onClick={handleSaveTemplateModal}
+                >
+                  {templateModal.mode === 'add' ? 'Save template' : 'Update template'}
+                </button>
+              </div>
+            </div>
+
+            {templates.length > 0 && (
+              <div style={{ marginTop: 20, borderTop: '1px solid var(--color-border)', paddingTop: 14 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                  All saved templates ({templates.length})
+                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
+                  {templates.map((t) => {
+                    const tid = t.id || `${t.name}:${t.language}`;
+                    const isSelected = form.templateName === t.name && form.languageCode === t.language;
+                    return (
+                      <div
+                        key={tid}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 12px',
+                          background: isSelected ? 'var(--color-bg-active, #eff6ff)' : 'var(--color-bg-subtle, #f8fafc)',
+                          border: isSelected ? '1px solid var(--color-primary-light, #93c5fd)' : '1px solid var(--color-border, #e2e8f0)',
+                          borderRadius: 6,
+                          fontSize: 13,
+                        }}
+                      >
+                        <div>
+                          <strong>{t.name}</strong> <span className="muted">— {t.language}</span>
+                          {isSelected && <span style={{ marginLeft: 8, fontSize: 11, background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: 4, fontWeight: 500 }}>Selected</span>}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            type="button"
+                            className="button secondary"
+                            style={{ padding: '3px 8px', fontSize: 12 }}
+                            onClick={() => {
+                              setTemplateModal({
+                                open: true,
+                                mode: 'edit',
+                                oldId: tid,
+                                name: t.name,
+                                language: t.language,
+                              });
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="button danger"
+                            style={{ padding: '3px 8px', fontSize: 12 }}
+                            onClick={() => handleDeleteTemplate(tid)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

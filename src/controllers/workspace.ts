@@ -313,12 +313,64 @@ export async function saveTemplate(req: Request, res: Response): Promise<void> {
   const id = input.name + ':' + input.language;
   await mutate(req.merchantId, (s) => {
     const templates = (s.workspace.settings.savedTemplates ??= []);
-    if (!templates.some((t) => t.id === id)) {
+    if (!templates.some((t) => t.id === id || (t.name === input.name && t.language === input.language))) {
       if (templates.length >= 100) throw new InputError('A maximum of 100 templates can be saved');
       templates.push({ id, ...input });
     }
   });
   res.json({ ok: true, id, message: 'Template saved. Select it and save integrations to use it.' });
+}
+
+export async function deleteTemplate(req: Request, res: Response): Promise<void> {
+  const id = String(req.params.id || req.body?.id || '').trim();
+  if (!id) throw new InputError('Template ID is required');
+  await mutate(req.merchantId, (s) => {
+    const templates = (s.workspace.settings.savedTemplates ??= []);
+    s.workspace.settings.savedTemplates = templates.filter(
+      (t) => t.id !== id && `${t.name}:${t.language}` !== id,
+    );
+    const i = s.workspace.integration;
+    if (
+      `${i.templateName}:${i.languageCode}` === id ||
+      i.templateName === id.split(':')[0]
+    ) {
+      const fallback = s.workspace.settings.savedTemplates[0];
+      if (fallback) {
+        i.templateName = fallback.name;
+        i.languageCode = fallback.language;
+      } else {
+        i.templateName = 'relay_order_confirmation_v1';
+        i.languageCode = 'en';
+      }
+    }
+  });
+  res.json({ ok: true, message: 'Template removed.' });
+}
+
+export async function updateTemplate(req: Request, res: Response): Promise<void> {
+  const oldId = String(req.body?.oldId || req.params.id || '').trim();
+  const input = templateInput.parse(req.body);
+  const newId = input.name + ':' + input.language;
+  await mutate(req.merchantId, (s) => {
+    const templates = (s.workspace.settings.savedTemplates ??= []);
+    const idx = templates.findIndex(
+      (t) => t.id === oldId || `${t.name}:${t.language}` === oldId,
+    );
+    if (idx !== -1) {
+      templates[idx] = { id: newId, ...input };
+    } else {
+      templates.push({ id: newId, ...input });
+    }
+    const i = s.workspace.integration;
+    if (
+      `${i.templateName}:${i.languageCode}` === oldId ||
+      i.templateName === oldId.split(':')[0]
+    ) {
+      i.templateName = input.name;
+      i.languageCode = input.language;
+    }
+  });
+  res.json({ ok: true, id: newId, message: 'Template updated.' });
 }
 export async function saveIntegration(req: Request, res: Response): Promise<void> {
   const input = z

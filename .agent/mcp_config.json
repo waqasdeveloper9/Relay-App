@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "relay-database": {
+      "command": "node",
+      "args": [
+        "E:/McpServers/sql-mcp/dist/index.js"
+      ],
+      "env": {
+        "DB_PROVIDER": "postgres",
+        "PG_CONNECTION_STRING": "postgresql://postgres.azwqrufmpiitswnzghcj:LjTbNHE2imotfOQl@aws-0-eu-west-2.pooler.supabase.com:5432/postgres?schema=relay",
+        "PG_SSL": "true",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
+      }
+    }
+  }
+}

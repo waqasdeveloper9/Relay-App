@@ -12,6 +12,7 @@ The current product is a development/client pilot, not a completed public SaaS r
 
 - [Product behavior and current boundaries](agents/PRODUCT.md)
 - [Architecture and stack rules](agents/ARCHITECTURE.md)
+- [Database schema & models reference](agents/DATABASE_SCHEMA.md)
 - [Tenant isolation and security](agents/SECURITY.md)
 - [External integrations and recovery](agents/RELIABILITY.md)
 - [Frontend and user experience](agents/FRONTEND.md)

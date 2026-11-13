@@ -316,11 +316,57 @@ export function markForReview(w: Workspace, order: Order, reason = 'moved to rev
 export function handleOrderDecision(
   w: Workspace,
   order: Order,
-  action: 'CONFIRM' | 'CANCEL',
+  action: 'CONFIRM' | 'CANCEL' | 'CHANGE_ADDRESS' | string,
 ): void {
   const c = conversation(w, order);
-  append(c, 'in', action === 'CONFIRM' ? 'Confirm order' : 'Cancel order');
+  const actionLabel =
+    action === 'CONFIRM'
+      ? 'Confirm order'
+      : action === 'CHANGE_ADDRESS'
+        ? 'Edit address'
+        : action === 'CANCEL'
+          ? 'Cancel order'
+          : action;
+  append(c, 'in', actionLabel);
   c.unread = true;
+  if (action === 'CHANGE_ADDRESS') {
+    order.status = 'NEEDS_REVIEW';
+    c.human = true;
+    if (
+      !w.tasks.some(
+        (t) => t.orderId === order.id && t.kind === 'Address change' && t.status !== 'VERIFIED',
+      )
+    ) {
+      w.tasks.unshift({
+        id: randomUUID(),
+        orderId: order.id,
+        kind: 'Address change',
+        detail:
+          'Customer tapped Edit/Change address on WhatsApp. Review customer details and update delivery address before dispatch.',
+        status: 'OPEN',
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const sync = shopifySyncSettings(w);
+    if (sync.tagOnReview) {
+      enqueue(w, order, 'REVIEW_TAG');
+    }
+    notify(
+      w,
+      'decision:' + order.id,
+      'Address change requested',
+      `Customer requested address update for ${order.number}. Order moved to Needs review.`,
+      'Review customer address in Inbox and Shopify before dispatch.',
+      'warning',
+    );
+    activity(w, `Address change requested for ${order.number}; merchant review required.`);
+    append(
+      c,
+      'note',
+      'Customer requested address change. Order moved to Needs review and assigned to a human.',
+    );
+    return;
+  }
   if (!order.archivedAt && order.status === 'CONFIRMED' && action === 'CANCEL') {
     order.status = 'NEEDS_REVIEW';
     c.human = true;

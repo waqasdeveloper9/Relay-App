@@ -13,6 +13,8 @@ import {
   parseOrderButton,
   sendOrderConfirmation,
   cancelUnpaidCodOrder,
+  detectButtonAction,
+  resolveTemplateVariables,
 } from '../services/order-confirmation.js';
 
 function fixtures() {
@@ -49,12 +51,48 @@ function remoteOrder() {
 }
 const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
 
+test('detectButtonAction and resolveTemplateVariables unit tests', () => {
+  assert.equal(detectButtonAction('Confirm Order'), 'CONFIRM');
+  assert.equal(detectButtonAction('Edit Address'), 'CHANGE_ADDRESS');
+  assert.equal(detectButtonAction('Change Address'), 'CHANGE_ADDRESS');
+  assert.equal(detectButtonAction('Cancel Order'), 'CANCEL');
+  assert.equal(detectButtonAction('Talk to support'), 'SUPPORT');
+
+  const resolved = resolveTemplateVariables(
+    'Hi {{1}}! Thank you for your order {{2}} of {{3}} ({{4}} {{5}}) at {{6}}.\n📍 Delivery address:\n{{7}}',
+    7,
+    {
+      customerName: 'Customer',
+      brandName: 'Store',
+      orderNumber: '#100',
+      cleanOrderNumber: '100',
+      items: 'Items',
+      currency: 'Rs',
+      amount: '500',
+      totalPrice: 'Rs 500',
+      address: 'Islamabad',
+    },
+  );
+  assert.deepEqual(resolved, ['Customer', '#100', 'Items', 'Rs', '500', 'Store', 'Islamabad']);
+});
+
 test('order button signatures reject tampering and bind the action and order', () => {
   const signed = buttonPayload('CONFIRM', 'order-123');
   assert.deepEqual(parseOrderButton(signed), { action: 'CONFIRM', orderId: 'order-123' });
   assert.equal(parseOrderButton(signed.replace('CONFIRM', 'CANCEL')), undefined);
   assert.equal(parseOrderButton(signed.replace('order-123', 'order-456')), undefined);
   assert.equal(parseOrderButton('CONFIRM:order-123'), undefined);
+  const addressSigned = buttonPayload('CHANGE_ADDRESS', 'order-123');
+  assert.deepEqual(parseOrderButton(addressSigned), { action: 'CHANGE_ADDRESS', orderId: 'order-123' });
+});
+
+test('handleOrderDecision creates an Address change task when CHANGE_ADDRESS is selected', () => {
+  const { workspace, order } = fixtures();
+  handleOrderDecision(workspace, order, 'CHANGE_ADDRESS');
+  assert.equal(order.status, 'NEEDS_REVIEW');
+  assert.equal(workspace.tasks.length, 1);
+  assert.equal(workspace.tasks[0]!.kind, 'Address change');
+  assert.equal(workspace.tasks[0]!.status, 'OPEN');
 });
 
 test('first button decision wins and cancellation is not marked complete prematurely', () => {
@@ -151,6 +189,82 @@ test('approved order template maps Shopify values to six variables and two signe
       await sendOrderConfirmation(integration, order, 'Test Store'),
       'order-template-message',
     );
+  } finally {
+    globalThis.fetch = original;
+    Object.assign(config, before);
+  }
+});
+
+test('approved order template maps 7-variable address template and 3 buttons dynamically', async () => {
+  const { integration, order } = fixtures();
+  integration.templateName = 'order_confirm_with_address';
+  integration.languageCode = 'en';
+  const before = {
+    metaSecret: config.metaSecret,
+    metaVerifyToken: config.metaVerifyToken,
+    appUrl: config.appUrl,
+  };
+  const original = globalThis.fetch;
+  Object.assign(config, {
+    metaSecret: 'test-app-secret',
+    metaVerifyToken: 'test-verify-token',
+    appUrl: 'https://test.example',
+  });
+  let sends = 0;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).includes('/message_templates'))
+      return response({
+        data: [
+          {
+            name: integration.templateName,
+            language: integration.languageCode,
+            status: 'APPROVED',
+            components: [
+              {
+                type: 'BODY',
+                text: 'Hi {{1}}! Thank you for your order {{2}} of {{3}} ({{4}} {{5}}) at {{6}}.\n\n📍 Delivery address:\n{{7}}\n\nPlease confirm your order or let us know if you need to update your address.',
+              },
+              {
+                type: 'BUTTONS',
+                buttons: [
+                  { type: 'QUICK_REPLY', text: 'Confirm Order' },
+                  { type: 'QUICK_REPLY', text: 'Edit Address' },
+                  { type: 'QUICK_REPLY', text: 'Cancel Order' },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+    const body = JSON.parse(String(options?.body));
+    if (body.query) return response({ data: { order: remoteOrder() } });
+    sends++;
+    assert.equal(body.to, order.phone);
+    assert.deepEqual(
+      body.template.components[0].parameters.map((p: { text: string }) => p.text),
+      [order.name, '#99', 'Test product x2', 'PKR', '500', 'Test Store', 'Test address, Islamabad'],
+    );
+    assert.equal(body.template.components.length, 4);
+    assert.deepEqual(parseOrderButton(body.template.components[1].parameters[0].payload), {
+      action: 'CONFIRM',
+      orderId: order.id,
+    });
+    assert.deepEqual(parseOrderButton(body.template.components[2].parameters[0].payload), {
+      action: 'CHANGE_ADDRESS',
+      orderId: order.id,
+    });
+    assert.deepEqual(parseOrderButton(body.template.components[3].parameters[0].payload), {
+      action: 'CANCEL',
+      orderId: order.id,
+    });
+    return response({ messages: [{ id: 'order-address-template-message' }] });
+  };
+  try {
+    assert.equal(
+      await sendOrderConfirmation(integration, order, 'Test Store'),
+      'order-address-template-message',
+    );
+    assert.equal(sends, 1);
   } finally {
     globalThis.fetch = original;
     Object.assign(config, before);

@@ -90,10 +90,13 @@ export async function testOrderTemplate(req: Request, res: Response): Promise<vo
     .parse(req.body ?? {});
 
   if (input.kind === 'confirmation') {
-    await validateConfirmationTemplate(req.store.workspace.integration);
+    const verified = await validateConfirmationTemplate(req.store.workspace.integration);
+    const buttonSummary = verified.buttons.length
+      ? `${verified.buttons.length} button(s) [${verified.buttons.map((b) => b.text || b.action).join(', ')}]`
+      : 'no buttons (text reply mode)';
     res.json({
-      message:
-        'Approved six-variable template and Confirm/Cancel buttons verified. Configure and verify the Meta reply webhook before enabling the order test.',
+      ok: true,
+      message: `Approved confirmation template "${req.store.workspace.integration.templateName}" verified (${verified.variableCount} variable(s), ${buttonSummary}). Configure and verify the Meta reply webhook before enabling the order test.`,
     });
     return;
   }

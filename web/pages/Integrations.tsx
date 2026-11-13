@@ -737,19 +737,21 @@ export function Integrations({ data, busy, act }: { data: Snapshot; busy: boolea
               </small>
             </div>
             <details>
-              <summary>Order template requirements</summary>
+              <summary>Order template requirements & support</summary>
               <p>
-                Use a Utility template with no header and six body variables in this order: customer
-                name, store name, order number, items and quantities, COD total, delivery address.
+                Relay supports any approved Meta template for order confirmation. Variable placeholders
+                (e.g. customer name, brand name, order number, items, total price, and delivery address)
+                are resolved automatically.
               </p>
               <p>
-                Add quick-reply buttons in order: <strong>Confirm order</strong>,{' '}
-                <strong>Cancel order</strong>. Save your selection, then validate it below.
+                Quick-reply buttons are detected dynamically (e.g. <strong>Confirm order</strong>,{' '}
+                <strong>Edit address / Change address</strong>, and <strong>Cancel order</strong>).
+                Save your selection, then click Validate template below.
               </p>
               <p>
                 Confirmation adds <strong>{sync.confirmedTag}</strong> in Shopify. Cancellation is
                 limited to unpaid, unfulfilled COD orders and is marked complete only after Shopify
-                confirms it.
+                confirms it. Address edit requests create a task and notify you for human follow-up.
               </p>
             </details>
             <button
